@@ -1,14 +1,14 @@
-import type { InvoiceStatus, PaymentStatus } from "@/lib/types";
+import type { InvoiceStatus, PaymentStatus, SubscriptionStatus } from "@/lib/types";
 
-type StatusType = InvoiceStatus | PaymentStatus;
+type StatusType = InvoiceStatus | PaymentStatus | SubscriptionStatus;
 
 interface StatusBadgeProps {
   status: StatusType;
-  type?: "invoice" | "payment";
+  type?: "invoice" | "payment" | "subscription";
   size?: "sm" | "md";
 }
 
-const statusConfig: Record<StatusType, { label: string; color: string }> = {
+const statusConfig: Record<string, { label: string; color: string }> = {
   // Invoice statuses
   pending: {
     label: "Pending",
@@ -51,10 +51,39 @@ const statusConfig: Record<StatusType, { label: string; color: string }> = {
     label: "Orphaned",
     color: "bg-gb-error/15 text-gb-error border-gb-error/30",
   },
+  // Subscription statuses
+  active: {
+    label: "● Active",
+    color: "bg-gb-success/15 text-gb-success border-gb-success/30",
+  },
+  paused: {
+    label: "⏸ Paused",
+    color: "bg-blue-500/15 text-blue-400 border-blue-500/30",
+  },
+  past_due: {
+    label: "⚠ Past Due",
+    color: "bg-gb-warning/15 text-gb-warning border-gb-warning/30",
+  },
 };
 
-export function StatusBadge({ status, size = "sm" }: StatusBadgeProps) {
-  const config = statusConfig[status];
+// Subscription-specific overrides for shared keys (cancelled, expired)
+const subscriptionOverrides: Record<string, { label: string; color: string }> = {
+  cancelled: {
+    label: "— Cancelled",
+    color: "bg-gb-text-secondary/15 text-gb-text-secondary border-gb-text-secondary/30",
+  },
+  expired: {
+    label: "✕ Expired",
+    color: "bg-gb-error/15 text-gb-error border-gb-error/30",
+  },
+};
+
+export function StatusBadge({ status, type, size = "sm" }: StatusBadgeProps) {
+  // Use subscription-specific config for overlapping keys
+  let config =
+    type === "subscription" && subscriptionOverrides[status]
+      ? subscriptionOverrides[status]
+      : statusConfig[status];
 
   if (!config) {
     return (

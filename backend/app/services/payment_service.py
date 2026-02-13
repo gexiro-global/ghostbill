@@ -8,6 +8,7 @@ Responsibilities:
     - Handle reorgs (TX disappears → payment orphaned, invoice recalculated)
     - Sum cumulative payments per invoice and trigger status transitions
     - Dust filtering (ignore below DUST_THRESHOLD_ATOMIC)
+    - Phase 5A: subscription payment hook (invoice.paid → subscription recovery)
 
 CRITICAL:
     - amount_atomic (BIGINT, piconero) = source of truth
@@ -429,6 +430,9 @@ class PaymentService:
         if cumulative <= 0:
             return invoice.status
 
+        # Track old status for subscription hook
+        old_status = invoice.status
+
         # Determine target status
         new_status: InvoiceStatus | None = None
 
@@ -440,13 +444,6 @@ class PaymentService:
             if cumulative > required:
                 # Overpaid: transition through paid first if needed
                 if invoice.status == InvoiceStatus.pending:
-                    # pending → partially_paid → overpaid is not valid
-                    # pending → paid is valid, but we want overpaid
-                    # For pending: if cumulative > required, go to overpaid
-                    # But VALID_TRANSITIONS says pending → [paid, partially_paid, expired, cancelled]
-                    # and partially_paid → [paid, overpaid]
-                    # So pending → paid first, but actually overpaid is not in pending transitions
-                    # We need: pending → partially_paid → overpaid
                     await invoice_service.update_status(
                         db, invoice, InvoiceStatus.partially_paid,
                         details={"cumulative_atomic": cumulative, "required_atomic": required},
@@ -466,6 +463,23 @@ class PaymentService:
                     "required_atomic": required,
                 },
             )
+
+        # === Phase 5A: Subscription payment hook ===
+        # If invoice transitioned to a paid state, notify subscription service
+        if invoice.status in (
+            InvoiceStatus.paid,
+            InvoiceStatus.overpaid,
+            InvoiceStatus.late_paid,
+        ) and old_status != invoice.status:
+            try:
+                from app.services.subscription_service import subscription_service
+                await subscription_service.handle_subscription_payment(db, invoice.id)
+            except Exception as exc:
+                logger.warning(
+                    "Subscription payment hook failed for invoice %s: %s",
+                    invoice.id, exc,
+                )
+        # === END Phase 5A ===
 
         return invoice.status
 

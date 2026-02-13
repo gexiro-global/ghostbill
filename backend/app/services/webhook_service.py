@@ -17,6 +17,12 @@ Headers sent:
 
 Retry schedule (7 attempts):
     immediate → 1m → 5m → 30m → 2h → 12h → 24h → stop
+
+Events (13 total):
+    payment.detected, payment.confirmed, payment.orphaned
+    invoice.paid, invoice.expired, invoice.partially_paid, invoice.overpaid, invoice.late_paid
+    subscription.created, subscription.renewed, subscription.past_due,
+    subscription.cancelled, subscription.payment_confirmed
 """
 
 import asyncio
@@ -38,6 +44,7 @@ from app.db.models import (
     Invoice,
     Merchant,
     Payment,
+    Subscription,
     WebhookDelivery,
     WebhookStatus,
 )
@@ -55,6 +62,26 @@ RETRY_DELAYS: list[int] = [60, 300, 1800, 7200, 43200, 86400]
 # Jitter range in seconds (metadata protection)
 JITTER_MIN: float = 0.05
 JITTER_MAX: float = 0.2
+
+# Valid event types (13 total)
+VALID_EVENTS: list[str] = [
+    # Payment events (3)
+    "payment.detected",
+    "payment.confirmed",
+    "payment.orphaned",
+    # Invoice events (5)
+    "invoice.paid",
+    "invoice.expired",
+    "invoice.partially_paid",
+    "invoice.overpaid",
+    "invoice.late_paid",
+    # Subscription events (5) — Phase 5A
+    "subscription.created",
+    "subscription.renewed",
+    "subscription.past_due",
+    "subscription.cancelled",
+    "subscription.payment_confirmed",
+]
 
 
 # ─── HMAC Signing ────────────────────────────────────────────────────────────
@@ -166,7 +193,7 @@ class WebhookService:
 
         return delivery
 
-    # ── Build Payload ────────────────────────────────────────────────────
+    # ── Build Payloads ───────────────────────────────────────────────────
 
     @staticmethod
     def build_payment_payload(
@@ -213,6 +240,39 @@ class WebhookService:
             },
         }
 
+    @staticmethod
+    def build_subscription_payload(
+        event_type: str,
+        subscription: Subscription,
+        invoice_id: uuid.UUID | None = None,
+        period_start: datetime | None = None,
+        period_end: datetime | None = None,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        """Build webhook payload for subscription events."""
+        payload: dict[str, Any] = {
+            "subscription": {
+                "id": str(subscription.id),
+                "merchant_id": str(subscription.merchant_id),
+                "customer_id": str(subscription.customer_id),
+                "status": subscription.status.value if hasattr(subscription.status, 'value') else str(subscription.status),
+                "amount_atomic": subscription.amount_atomic,
+                "amount_xmr": str(subscription.amount_xmr),
+                "interval_days": subscription.interval_days,
+                "next_due_at": subscription.next_due_at.isoformat() if subscription.next_due_at else None,
+                "created_at": subscription.created_at.isoformat(),
+            },
+        }
+        if invoice_id:
+            payload["invoice_id"] = str(invoice_id)
+        if period_start:
+            payload["period_start"] = period_start.isoformat()
+        if period_end:
+            payload["period_end"] = period_end.isoformat()
+        if reason:
+            payload["reason"] = reason
+        return payload
+
     # ── Dispatch Events ──────────────────────────────────────────────────
 
     async def dispatch_events(
@@ -223,7 +283,7 @@ class WebhookService:
         invoice: Invoice,
         payment: Payment | None = None,
     ) -> list[WebhookDelivery]:
-        """Queue webhook deliveries for a list of events.
+        """Queue webhook deliveries for payment/invoice events.
 
         Args:
             events: List of event type strings.
@@ -257,6 +317,48 @@ class WebhookService:
                 deliveries.append(delivery)
 
         return deliveries
+
+    async def dispatch_subscription_event(
+        self,
+        db: AsyncSession,
+        event_type: str,
+        subscription: Subscription,
+        invoice_id: uuid.UUID | None = None,
+        period_start: datetime | None = None,
+        period_end: datetime | None = None,
+        reason: str | None = None,
+    ) -> WebhookDelivery | None:
+        """Queue a single subscription webhook event.
+
+        Loads merchant from DB. Returns None if no webhook configured.
+        """
+        from app.db.models import Merchant as MerchantModel
+        from sqlalchemy import select as sa_select
+
+        merchant_stmt = sa_select(MerchantModel).where(
+            MerchantModel.id == subscription.merchant_id
+        )
+        merchant = (await db.execute(merchant_stmt)).scalar_one_or_none()
+        if merchant is None:
+            return None
+
+        payload = self.build_subscription_payload(
+            event_type=event_type,
+            subscription=subscription,
+            invoice_id=invoice_id,
+            period_start=period_start,
+            period_end=period_end,
+            reason=reason,
+        )
+        payload["event"] = event_type
+        payload["timestamp"] = datetime.now(timezone.utc).isoformat()
+
+        return await self.queue_webhook(
+            db=db,
+            merchant=merchant,
+            event_type=event_type,
+            payload=payload,
+        )
 
     # ── Attempt Delivery ─────────────────────────────────────────────────
 

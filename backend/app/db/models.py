@@ -46,6 +46,7 @@ class PaymentStatus(str, enum.Enum):
 class SubscriptionStatus(str, enum.Enum):
     active = "active"
     paused = "paused"
+    past_due = "past_due"
     cancelled = "cancelled"
     expired = "expired"
 
@@ -247,6 +248,7 @@ class Subscription(Base):
     cancelled_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    metadata_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

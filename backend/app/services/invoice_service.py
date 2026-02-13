@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 # ─── Constants ───────────────────────────────────────────────────────────────
 
 EXPIRES_IN_MIN: int = 600       # 10 minutes
-EXPIRES_IN_MAX: int = 86400     # 24 hours
+EXPIRES_IN_MAX: int = 2592000   # 30 days (subscription grace periods)
 EXPIRES_IN_DEFAULT: int = 3600  # 1 hour
 
 # ─── State Machine ──────────────────────────────────────────────────────────

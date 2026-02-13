@@ -11,6 +11,13 @@ export type InvoiceStatus =
 
 export type PaymentStatus = "detected" | "confirmed" | "orphaned";
 
+export type SubscriptionStatus =
+  | "active"
+  | "paused"
+  | "past_due"
+  | "cancelled"
+  | "expired";
+
 export type WebhookEvent =
   | "payment.detected"
   | "payment.confirmed"
@@ -19,7 +26,12 @@ export type WebhookEvent =
   | "invoice.expired"
   | "invoice.partially_paid"
   | "invoice.overpaid"
-  | "invoice.late_paid";
+  | "invoice.late_paid"
+  | "subscription.created"
+  | "subscription.renewed"
+  | "subscription.past_due"
+  | "subscription.cancelled"
+  | "subscription.payment_confirmed";
 
 export type NetworkMode = "live" | "test";
 
@@ -33,6 +45,17 @@ export interface Merchant {
   webhook_secret: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// === Customer ===
+
+export interface Customer {
+  id: string;
+  merchant_id: string;
+  external_id: string | null;
+  email: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
 }
 
 // === Invoice ===
@@ -70,6 +93,41 @@ export interface Payment {
   detected_at: string;
   confirmed_at: string | null;
   block_height: number | null;
+}
+
+// === Subscription ===
+
+export interface Subscription {
+  id: string;
+  merchant_id: string;
+  customer_id: string;
+  status: SubscriptionStatus;
+  amount_xmr: string;
+  amount_atomic: string;
+  interval_days: number;
+  grace_days_soft: number;
+  grace_days_hard: number;
+  next_due_at: string | null;
+  cancelled_at: string | null;
+  created_at: string;
+  metadata: Record<string, unknown>;
+  customer?: CustomerSummary;
+  payments?: SubscriptionPaymentInfo[];
+}
+
+export interface CustomerSummary {
+  id: string;
+  external_id: string | null;
+  email: string | null;
+}
+
+export interface SubscriptionPaymentInfo {
+  id: string;
+  period_start: string;
+  period_end: string;
+  invoice_id: string;
+  invoice_status: InvoiceStatus;
+  paid_at: string | null;
 }
 
 // === Webhook ===
@@ -130,6 +188,20 @@ export interface InvoiceListResponse {
 
 export interface PaymentListResponse {
   payments: Payment[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface CustomerListResponse {
+  customers: Customer[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface SubscriptionListResponse {
+  subscriptions: Subscription[];
   total: number;
   limit: number;
   offset: number;

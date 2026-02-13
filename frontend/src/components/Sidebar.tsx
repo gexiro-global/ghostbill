@@ -6,6 +6,8 @@ import {
   LayoutDashboard,
   FileText,
   Wallet,
+  Users,
+  RefreshCw,
   Code2,
   Settings,
   Ghost,
@@ -17,6 +19,8 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/dashboard/invoices", label: "Invoices", icon: FileText },
   { href: "/dashboard/payments", label: "Payments", icon: Wallet },
+  { href: "/dashboard/customers", label: "Customers", icon: Users },
+  { href: "/dashboard/subscriptions", label: "Subscriptions", icon: RefreshCw },
   { href: "/dashboard/developers", label: "Developers", icon: Code2 },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];

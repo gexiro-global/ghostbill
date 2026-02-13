@@ -2,7 +2,8 @@
 Rate limiter middleware.
 
 Wraps core/rate_limit.py SlidingWindowRateLimiter into Starlette middleware.
-Determines tier from request auth:
+Determines tier from request context:
+- Public API paths (/v1/invoices/*/public, /pay/*): PUBLIC_API tier (300/min per IP)
 - Authenticated: tier from merchant record (default: starter)
 - Unauthenticated: 10/min per IP (or 30/min if Tor)
 - Health endpoint: exempt
@@ -12,6 +13,7 @@ On Redis failure: fail-open (request passes through).
 """
 
 import logging
+import re
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
@@ -28,6 +30,13 @@ logger = logging.getLogger(__name__)
 
 # Paths exempt from rate limiting
 EXEMPT_PATHS = {"/health", "/docs", "/openapi.json"}
+
+# Public API paths — higher rate limit, no auth required
+# Matches: /v1/invoices/{uuid}/public and /pay/{uuid}
+PUBLIC_API_PATTERN = re.compile(
+    r"^/v1/invoices/[0-9a-f\-]{36}/public$|^/pay/[0-9a-f\-]{36}$",
+    re.IGNORECASE,
+)
 
 
 class RateLimiterMiddleware(BaseHTTPMiddleware):
@@ -86,9 +95,21 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
     def _resolve_rate_context(self, request: Request) -> tuple[str, RateTier]:
         """Determine rate limit identifier and tier from request.
 
+        Priority:
+        1. Public API paths → PUBLIC_API tier (300/min per IP)
+        2. Authenticated (Bearer gb_*) → merchant tier (default starter)
+        3. Unauthenticated → 10/min per IP (30/min if Tor)
+
         Returns:
             (identifier, tier) tuple.
         """
+        path = request.url.path
+
+        # Check for public API paths first (before auth check)
+        if PUBLIC_API_PATTERN.match(path):
+            client_ip = self._get_client_ip(request)
+            return f"pub:{client_ip}", RateTier.PUBLIC_API
+
         # Check for API key in Authorization header
         auth_header = request.headers.get("authorization", "")
         if auth_header.startswith("Bearer gb_"):

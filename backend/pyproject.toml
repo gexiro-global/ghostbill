@@ -16,6 +16,9 @@ dependencies = [
     "bcrypt>=4.2.0",
     "cryptography>=44.0.0",
     "python-multipart>=0.0.12",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "segno>=1.6.0",
 ]
 
 [build-system]

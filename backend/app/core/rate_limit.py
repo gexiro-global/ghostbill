@@ -8,8 +8,10 @@ Algorithm (sorted set per identifier):
 4. ZADD key now now -> record current request
 5. EXPIRE key window -> auto-cleanup safety net
 
-4 tiers: starter (100/min), growth (300/min), enterprise (1000/min), unauthenticated (10/min).
+5 tiers: starter (100/min), growth (300/min), enterprise (1000/min),
+         unauthenticated (10/min), public_api (300/min).
 Tor-aware: unauthenticated Tor requests get separate generous limit.
+Public API: high limit for payment page polling (no auth required).
 """
 
 import time
@@ -29,6 +31,7 @@ class RateTier(str, Enum):
     ENTERPRISE = "enterprise"
     UNAUTHENTICATED = "unauthenticated"
     TOR_UNAUTHENTICATED = "tor_unauthenticated"
+    PUBLIC_API = "public_api"
 
 
 # Requests per window (window = 60 seconds)
@@ -38,6 +41,7 @@ TIER_LIMITS: dict[RateTier, int] = {
     RateTier.ENTERPRISE: 1000,
     RateTier.UNAUTHENTICATED: 10,
     RateTier.TOR_UNAUTHENTICATED: 30,  # Generous for Tor shared exits
+    RateTier.PUBLIC_API: 300,  # Payment page polling (5s interval = 12/min typical)
 }
 
 WINDOW_SECONDS = 60

@@ -1,41 +1,61 @@
-# Environment
+# Environment & secrets
 .env
-!.env.example
+.env.local
+.env.production
 
 # Python
 __pycache__/
 *.py[cod]
+*$py.class
+*.so
 *.egg-info/
 dist/
 build/
+.eggs/
+*.egg
 .venv/
 venv/
+env/
 
-# Node
+# Node.js
 node_modules/
 .next/
 out/
+.turbo/
 
-# Wallet data (CRITICAL - never commit)
+# Wallet data (CRITICAL — never commit)
 wallet-data/
 *.keys
 *.cache
+
+# Database
+*.sql
+*.sql.gz
+*.sql.gz.gpg
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# OS
+*~
 .DS_Store
-Thumbs.db
-
-# Docker volumes
-pgdata/
 
 # Logs
 *.log
+logs/
 
-# Alembic
-migrations/versions/__pycache__/
+# Docker
+docker-compose.override.yml
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Backups
+*-backup-*/
+ghostbill-backups/
+
+# Tor keys (sensitive)
+tor-data/

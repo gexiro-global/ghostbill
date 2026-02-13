@@ -1,0 +1,113 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ghostbill_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - ghostbill_pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5445:5432"
+    networks:
+      - ghostbill_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  redis:
+    image: redis:7-alpine
+    container_name: ghostbill_redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6391:6379"
+    networks:
+      - ghostbill_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ghostbill_backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:8013:8000"
+    volumes:
+      - ./backend/app:/app/app:ro
+    networks:
+      - ghostbill_net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ghostbill_frontend
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:3013:3000"
+    networks:
+      - ghostbill_net
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+  walletrpc:
+    image: ubuntu:24.04
+    container_name: ghostbill_walletrpc
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./wallet-data:/wallet:rw
+      - /opt/monero-x86_64-linux-gnu-v0.18.4.5/monero-wallet-rpc:/usr/local/bin/monero-wallet-rpc:ro
+    command: >
+      monero-wallet-rpc
+      --wallet-file /wallet/ghostbill_test
+      --password ${WALLET_PASSWORD}
+      --rpc-bind-ip 0.0.0.0
+      --rpc-bind-port 18083
+      --rpc-login ${WALLET_RPC_USER}:${WALLET_RPC_PASS}
+      --daemon-host 127.0.0.1
+      --daemon-port 31208
+      --daemon-login ${MONEROD_RPC_USER}:${MONEROD_RPC_PASS}
+      --confirm-external-bind
+      --log-level 1
+      --log-file /wallet/wallet-rpc.log
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/18083'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+networks:
+  ghostbill_net:
+    name: ghostbill_net
+    driver: bridge
+volumes:
+  ghostbill_pgdata:
+    name: ghostbill_pgdata

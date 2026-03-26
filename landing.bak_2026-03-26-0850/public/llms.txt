@@ -1,0 +1,38 @@
+# GhostBill
+
+> Non-custodial, Tor-native Monero payment processor with recurring billing.
+
+## Overview
+
+GhostBill is an open-source (AGPL-3.0) payment processor for Monero (XMR). It enables merchants to accept Monero payments without custody risk — private keys never touch the server. The system runs as a Tor hidden service by default, with optional clearnet access.
+
+## Key Facts
+
+- License: AGPL-3.0
+- Stack: FastAPI + PostgreSQL + Redis + monero-wallet-rpc + Next.js 15
+- Deployment: Docker Compose (5 containers, 15 minutes setup)
+- API: 32 REST endpoints
+- Webhooks: 13 events, HMAC-SHA256 signed, 7 automatic retries
+- Invoice States: 7 (pending, paid, expired, partially_paid, overpaid, late_paid, cancelled)
+- Subscription States: 5 (active, paused, past_due, cancelled, expired)
+- Fees: 0% — non-custodial architecture means no platform fees
+- Privacy: Tor-native, no IP logging, no cookies, no telemetry
+- Auth: API keys (gb_live_/gb_test_ prefix) with Bearer token
+
+## Architecture
+
+- Payments detected via wallet-RPC connected to merchant's Monero node
+- Each invoice generates a unique subaddress for payment tracking
+- Deterministic state machine with explicit transitions
+- Recurring billing with configurable grace periods and billing anchors
+- All outgoing connections (webhooks, price feeds) route through Tor
+- Customer management with external_id mapping
+
+## Links
+
+- Website: https://ghostbill.org
+- Full documentation: https://ghostbill.org/llms-full.txt
+- GitHub: https://github.com/nicknull/ghostbill
+- Contact: contact@ghostbill.org
+- License: https://www.gnu.org/licenses/agpl-3.0.html
+- Parent Company: Gexiro Enterprises Ltd, Gibraltar

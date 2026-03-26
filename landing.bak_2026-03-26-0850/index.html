@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GhostBill — Non-Custodial Monero Payment Processor</title>
+    <meta name="description" content="Non-custodial, Tor-native payment processor for Monero merchants. No accounts. No custody. No surveillance. AGPL-3.0 open source." />
+    <meta name="theme-color" content="#0a0a0f" />
+    <meta name="author" content="Gexiro Enterprises Ltd" />
+    <meta name="robots" content="index, follow" />
+
+    <!-- Canonical -->
+    <link rel="canonical" href="https://ghostbill.org/" />
+
+    <!-- Hreflang -->
+    <link rel="alternate" hreflang="en" href="https://ghostbill.org/" />
+    <link rel="alternate" hreflang="de" href="https://ghostbill.org/?lng=de" />
+    <link rel="alternate" hreflang="pl" href="https://ghostbill.org/?lng=pl" />
+    <link rel="alternate" hreflang="x-default" href="https://ghostbill.org/" />
+
+    <!-- Favicon + Manifest -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
+    <link rel="manifest" href="/manifest.json" />
+
+    <!-- OG -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="GhostBill — Non-Custodial Monero Payment Processor" />
+    <meta property="og:description" content="Privacy-first billing for the Monero economy. Self-hosted, Tor-native, zero fees. Deploy in 15 minutes." />
+    <meta property="og:url" content="https://ghostbill.org" />
+    <meta property="og:image" content="https://ghostbill.org/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:site_name" content="GhostBill" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:locale:alternate" content="de_DE" />
+    <meta property="og:locale:alternate" content="pl_PL" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="GhostBill — Non-Custodial Monero Payment Processor" />
+    <meta name="twitter:description" content="Privacy-first billing for the Monero economy. Self-hosted, Tor-native, zero fees." />
+    <meta name="twitter:image" content="https://ghostbill.org/og-image.png" />
+
+    <!-- Structured Data (JSON-LD) -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "GhostBill",
+      "description": "Non-custodial, Tor-native Monero payment processor with recurring billing. Open source, self-hosted, zero fees.",
+      "url": "https://ghostbill.org",
+      "applicationCategory": "FinanceApplication",
+      "operatingSystem": "Linux",
+      "license": "https://www.gnu.org/licenses/agpl-3.0.html",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "author": {
+        "@type": "Organization",
+        "name": "Gexiro Enterprises Ltd",
+        "url": "https://gexiro.com"
+      },
+      "codeRepository": "https://github.com/nicknull/ghostbill",
+      "programmingLanguage": ["Python", "JavaScript"],
+      "softwareVersion": "1.0-beta"
+    }
+    </script>
+
+    <!-- Font preload (reduce CLS) -->
+    <link rel="preload" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" as="style" />
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

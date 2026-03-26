@@ -1,0 +1,19 @@
+{
+  "name": "GhostBill — Non-Custodial Monero Payment Processor",
+  "short_name": "GhostBill",
+  "description": "Non-custodial, Tor-native Monero payment processor with recurring billing. Open source, self-hosted, zero fees.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0f",
+  "theme_color": "#0a0a0f",
+  "lang": "en",
+  "categories": ["finance", "crypto"],
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

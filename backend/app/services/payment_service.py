@@ -472,8 +472,8 @@ class PaymentService:
             InvoiceStatus.late_paid,
         ) and old_status != invoice.status:
             try:
-                from app.services.subscription_service import subscription_service
-                await subscription_service.handle_subscription_payment(db, invoice.id)
+                from app.services.subscription_grace import handle_subscription_payment
+                await handle_subscription_payment(db, invoice.id)
             except Exception as exc:
                 logger.warning(
                     "Subscription payment hook failed for invoice %s: %s",

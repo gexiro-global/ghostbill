@@ -1,61 +1,52 @@
-"""
-Subscription renewal background task.
+"""Subscription renewal background task.
 
 Runs every 3600s (1 hour):
-    Phase 1 — Renewal sweep: find active subs with next_due_at <= NOW(),
-              create invoices via subscription_service.
-    Phase 2 — Grace period check: soft (active → past_due), hard (past_due → expired),
-              recovery (past_due with paid invoice → active).
-    Phase 3 — Log summary.
-
-Concurrency safety:
-    - FOR UPDATE SKIP LOCKED prevents conflicts with API endpoints
-    - UNIQUE(subscription_id, period_start) prevents double billing
-    - _running flag prevents overlapping sweeps
+    Phase 1 — Renewal sweep: find due subscriptions, create invoices
+    Phase 2 — Grace period check: soft/hard/recovery
+    Phase 3 — Log summary
 """
 
 import asyncio
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Subscription, SubscriptionStatus
 from app.db.session import async_session
 from app.services.invoice_service import WalletUnavailableError
-from app.services.subscription_service import SkipRenewalError, subscription_service
+from app.services.subscription_exceptions import SkipRenewalError
+from app.services.subscription_renewal import create_renewal_invoice
+from app.services.subscription_grace import check_grace_periods
 
 logger = logging.getLogger(__name__)
 
-SWEEP_INTERVAL: int = 3600  # 1 hour
+SWEEP_INTERVAL: int = 3600
 BATCH_SIZE: int = 50
 
 
 async def subscription_renewer_loop() -> None:
     """Main loop — runs forever, sweeps every SWEEP_INTERVAL seconds."""
     logger.info("Subscription renewer started (interval=%ds)", SWEEP_INTERVAL)
-
     while True:
         try:
-            await _run_sweep()
+            await run_sweep()
         except asyncio.CancelledError:
             logger.info("Subscription renewer cancelled")
             raise
         except Exception as exc:
             logger.error("Subscription renewer error: %s", exc, exc_info=True)
-
         await asyncio.sleep(SWEEP_INTERVAL)
 
 
-async def _run_sweep() -> None:
-    """Execute one full renewal sweep + grace check."""
+async def run_sweep() -> dict:
+    """Execute one full renewal sweep + grace check. Returns summary dict."""
     renewed = 0
     skipped = 0
     failed = 0
 
     async with async_session() as db:
-        # Phase 1 — Renewal sweep
         while True:
             stmt = (
                 select(Subscription)
@@ -66,43 +57,35 @@ async def _run_sweep() -> None:
                 .with_for_update(skip_locked=True)
                 .limit(BATCH_SIZE)
             )
-            result = await db.execute(stmt)
-            subs = list(result.scalars().all())
-
+            subs = list((await db.execute(stmt)).scalars().all())
             if not subs:
                 break
 
             for sub in subs:
                 try:
-                    await subscription_service.create_renewal_invoice(db, sub)
+                    await create_renewal_invoice(db, sub)
                     renewed += 1
                 except SkipRenewalError:
                     skipped += 1
                 except WalletUnavailableError as exc:
                     failed += 1
-                    logger.warning(
-                        "Renewal failed (wallet): sub=%s, error=%s", sub.id, exc
-                    )
+                    logger.warning("Renewal failed (wallet): sub=%s, %s", sub.id, exc)
                 except Exception as exc:
                     failed += 1
-                    logger.error(
-                        "Renewal failed: sub=%s, error=%s", sub.id, exc, exc_info=True
-                    )
+                    logger.error("Renewal failed: sub=%s, %s", sub.id, exc, exc_info=True)
 
             await db.commit()
 
-        # Phase 2 — Grace period check
-        grace_counts = await subscription_service.check_grace_periods(db)
+        grace_counts = await check_grace_periods(db)
         await db.commit()
 
-    # Phase 3 — Summary
     total_grace = sum(grace_counts.values())
     if renewed or skipped or failed or total_grace:
         logger.info(
-            "Renewer sweep complete: %d renewed, %d skipped, %d failed, "
-            "%d past_due, %d expired, %d recovered",
+            "Renewer: %d renewed, %d skipped, %d failed, %d past_due, %d expired, %d recovered",
             renewed, skipped, failed,
-            grace_counts.get("soft", 0),
-            grace_counts.get("hard", 0),
+            grace_counts.get("soft", 0), grace_counts.get("hard", 0),
             grace_counts.get("recovered", 0),
         )
+
+    return {"renewed": renewed, "skipped": skipped, "failed": failed, "grace": grace_counts}

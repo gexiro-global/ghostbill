@@ -1,23 +1,17 @@
-"""
-GhostBill FastAPI application entry point.
+"""GhostBill FastAPI application entry point.
 
 Routers: merchants, price, invoices, payments, webhooks, api_keys, auth_signature,
-         customers, subscriptions (Phase 5A), public_invoice (Phase 5C)
-Middleware stack (order matters — outermost first):
-  1. RateLimiterMiddleware (reject early, before any processing)
-  2. SecurityHeadersMiddleware (add headers to all responses)
-  3. TimingJitterMiddleware (add random delay, innermost)
-
-CORS: enabled for .onion dashboard domain (if configured).
-
-Lifespan: Redis, log redaction, audit table, background tasks (6), cleanup on shutdown.
+         customers, subscriptions, public_invoice
+Middleware: RateLimiter → SecurityHeaders → TimingJitter
+Lifespan: Redis, background tasks (6), cleanup on shutdown.
 """
 
 import asyncio
 import logging
+import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -26,18 +20,14 @@ from app.dependencies import close_redis, get_redis
 from app.db.session import engine, async_session
 
 from app.services.monero_rpc import close_monero_rpc
-
-# Core
 from app.core.log_redactor import setup_log_redaction
 from app.core.audit import ensure_audit_table
 from app.core.encryption import get_encryption
 
-# Middleware
 from app.middleware.rate_limiter import RateLimiterMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.middleware.timing_jitter import TimingJitterMiddleware
 
-# Routers
 from app.api.routes.merchants import router as merchants_router
 from app.api.routes.price import router as price_router
 from app.api.routes.invoices import router as invoices_router
@@ -50,7 +40,6 @@ from app.api.routes.subscriptions import router as subscriptions_router
 from app.api.routes.public_invoice import api_router as public_api_router
 from app.api.routes.public_invoice import pay_router as pay_page_router
 
-# Background tasks
 from app.tasks.price_updater import price_updater_loop
 from app.tasks.invoice_expirer import run_invoice_expirer
 from app.tasks.detection_engine import detection_engine_loop
@@ -60,68 +49,44 @@ from app.tasks.subscription_renewer import subscription_renewer_loop
 
 logger = logging.getLogger(__name__)
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO if not settings.debug else logging.DEBUG,
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
-
-# Activate log redaction (must be after basicConfig)
 setup_log_redaction()
+
+_INTERNAL_IPS = {"127.0.0.1", "::1", "172.17.0.1", "172.23.0.1"}
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan: startup and shutdown hooks."""
-
-    # ── Startup ──────────────────────────────────────────────────────────
-
-    # Validate encryption key early (crash fast if missing)
     get_encryption()
     logger.info("Encryption key validated")
-
-    # Redis connection
     redis = await get_redis()
     await redis.ping()
     logger.info("Redis connected")
-
-    # Store Redis in app state (for middleware access)
     app.state.redis = redis
-
-    # Ensure audit_log table exists
     async with async_session() as db:
         await ensure_audit_table(db)
 
-    # Start background tasks (6 total)
-    price_task = asyncio.create_task(price_updater_loop(redis))
-    expirer_task = asyncio.create_task(run_invoice_expirer())
-    detection_task = asyncio.create_task(detection_engine_loop())
-    webhook_task = asyncio.create_task(webhook_worker_loop())
-    retention_task = asyncio.create_task(data_retention_loop())
-    renewer_task = asyncio.create_task(subscription_renewer_loop())
-
-    logger.info(
-        "Background tasks started: price_updater, invoice_expirer, "
-        "detection_engine, webhook_worker, data_retention, subscription_renewer"
-    )
-
+    tasks = [
+        asyncio.create_task(price_updater_loop(redis)),
+        asyncio.create_task(run_invoice_expirer()),
+        asyncio.create_task(detection_engine_loop()),
+        asyncio.create_task(webhook_worker_loop()),
+        asyncio.create_task(data_retention_loop()),
+        asyncio.create_task(subscription_renewer_loop()),
+    ]
+    logger.info("Background tasks started (6)")
     yield
 
-    # ── Shutdown ─────────────────────────────────────────────────────────
-
-    tasks = [
-        price_task, expirer_task, detection_task,
-        webhook_task, retention_task, renewer_task,
-    ]
     for task in tasks:
         task.cancel()
-
     for task in tasks:
         try:
             await task
         except asyncio.CancelledError:
             pass
-
     await close_monero_rpc()
     await close_redis()
     await engine.dispose()
@@ -129,66 +94,87 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title=settings.app_name,
-    version=settings.app_version,
+    title=settings.app_name, version=settings.app_version,
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
     lifespan=lifespan,
 )
-
-# ── CORS for .onion dashboard ────────────────────────────────────────────────
-# Allow requests from the .onion dashboard to the .onion API.
 
 _cors_origins: list[str] = []
 if settings.onion_dashboard:
     _cors_origins.append(f"http://{settings.onion_dashboard}")
 if settings.debug:
     _cors_origins.extend(["http://localhost:3013", "http://127.0.0.1:3013"])
-
 if _cors_origins:
     app.add_middleware(
-        CORSMiddleware,
-        allow_origins=_cors_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        CORSMiddleware, allow_origins=_cors_origins,
+        allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
     )
-
-# ── Middleware stack ─────────────────────────────────────────────────────────
-# Order: last added = outermost (executed first on request)
-# Request flow:  RateLimiter → SecurityHeaders → TimingJitter → route handler
-# Response flow: route handler → TimingJitter → SecurityHeaders → RateLimiter
 
 app.add_middleware(TimingJitterMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RateLimiterMiddleware)
 
-# ── Register routers ─────────────────────────────────────────────────────────
+for r in [
+    merchants_router, price_router, invoices_router, payments_router,
+    webhooks_router, api_keys_router, auth_signature_router,
+    customers_router, subscriptions_router,
+]:
+    app.include_router(r, prefix=settings.api_prefix)
+app.include_router(public_api_router, prefix=settings.api_prefix)
+app.include_router(pay_page_router)
 
-# Authenticated API routes (all under /v1 prefix)
-app.include_router(merchants_router, prefix=settings.api_prefix)
-app.include_router(price_router, prefix=settings.api_prefix)
-app.include_router(invoices_router, prefix=settings.api_prefix)
-app.include_router(payments_router, prefix=settings.api_prefix)
-app.include_router(webhooks_router, prefix=settings.api_prefix)
-app.include_router(api_keys_router, prefix=settings.api_prefix)
-app.include_router(auth_signature_router, prefix=settings.api_prefix)
-app.include_router(customers_router, prefix=settings.api_prefix)
-app.include_router(subscriptions_router, prefix=settings.api_prefix)
-
-# Public API routes (no auth required)
-app.include_router(public_api_router, prefix=settings.api_prefix)  # GET /v1/invoices/{id}/public
-app.include_router(pay_page_router)  # GET /pay/{id} (root level, no prefix)
-
-
-# ── Health check ─────────────────────────────────────────────────────────────
 
 @app.get("/health")
 async def health_check():
-    return JSONResponse(
-        content={
-            "status": "healthy",
-            "app": settings.app_name,
-            "version": settings.app_version,
-        }
-    )
+    return JSONResponse(content={
+        "status": "healthy", "app": settings.app_name, "version": settings.app_version,
+    })
+
+
+@app.post("/v1/internal/trigger-renewal")
+async def trigger_renewal(request: Request, subscription_id: str | None = None):
+    """Trigger renewal. Internal only."""
+    client_host = request.client.host if request.client else ""
+    if client_host not in _INTERNAL_IPS:
+        raise HTTPException(status_code=403, detail="Internal only.")
+
+    if subscription_id:
+        from sqlalchemy import select
+        from app.db.models import Subscription, SubscriptionStatus
+        from app.db.session import async_session as get_session
+        from app.services.subscription_renewal import _create_renewal_invoice
+        from app.services.subscription_exceptions import SkipRenewalError
+        from app.services.invoice_service import WalletUnavailableError
+        from app.db.models import Merchant
+
+        sub_uuid = uuid.UUID(subscription_id)
+        async with get_session() as db:
+            # FOR UPDATE prevents race condition with background renewer
+            stmt = (
+                select(Subscription)
+                .where(Subscription.id == sub_uuid, Subscription.status == SubscriptionStatus.active)
+                .with_for_update()
+            )
+            sub = (await db.execute(stmt)).scalar_one_or_none()
+            if sub is None:
+                raise HTTPException(status_code=404, detail="Subscription not found or not active.")
+
+            merchant = (await db.execute(
+                select(Merchant).where(Merchant.id == sub.merchant_id)
+            )).scalar_one_or_none()
+            if merchant is None:
+                return {"renewed": 0, "skipped": 1, "failed": 0, "reason": "merchant not found"}
+
+            try:
+                await _create_renewal_invoice(db, sub, merchant)
+                await db.commit()
+                return {"renewed": 1, "skipped": 0, "failed": 0}
+            except SkipRenewalError as exc:
+                return {"renewed": 0, "skipped": 1, "failed": 0, "reason": str(exc)}
+            except (WalletUnavailableError, Exception) as exc:
+                logger.error("Trigger renewal failed: %s: %s", subscription_id, exc)
+                return {"renewed": 0, "skipped": 0, "failed": 1, "error": str(exc)}
+    else:
+        from app.tasks.subscription_renewer import run_sweep
+        return await run_sweep()

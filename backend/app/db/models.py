@@ -24,7 +24,7 @@ class Base(DeclarativeBase):
     pass
 
 
-# ── Enums ──────────────────────────────────────────────────────────────────
+# ── Enums ──────────────────────────────────────────────────────────────────────
 
 
 class InvoiceStatus(str, enum.Enum):
@@ -57,7 +57,7 @@ class WebhookStatus(str, enum.Enum):
     failed = "failed"
 
 
-# ── Models ─────────────────────────────────────────────────────────────────
+# ── Models ─────────────────────────────────────────────────────────────────────
 
 
 class Merchant(Base):
@@ -249,6 +249,16 @@ class Subscription(Base):
         DateTime(timezone=True), nullable=True
     )
     metadata_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Phase 6A: billing anchor (deterministic renewal, no drift)
+    billing_anchor_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    # Phase 6A: pending changes (applied at next renewal)
+    pending_amount_atomic: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    pending_amount_xmr: Mapped[Decimal | None] = mapped_column(Numeric(18, 12), nullable=True)
+    pending_interval_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    pending_grace_soft: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    pending_grace_hard: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

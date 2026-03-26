@@ -1,8 +1,8 @@
-"""
-GhostBill — Concurrent invoice creation stress test.
+"""GhostBill — Concurrent invoice creation stress test.
 
 NOTE: Backend has rate limiting (100 req/min). Tests are tuned to work
 within those limits while still verifying concurrency safety.
+Updated for Phase 6B cursor pagination ("data" + "has_more").
 
 Usage:
     cd /root/ghostbill && python3 -m pytest tests/stress_test.py -v
@@ -76,7 +76,7 @@ class TestConcurrentInvoices:
             assert inv["amount_atomic"] == 1000000000  # 0.001 XMR
 
         throughput = len(successes) / elapsed
-        print(f"\n✓ Stress test: {len(successes)}/{count} in {elapsed:.2f}s")
+        print(f"\n\u2713 Stress test: {len(successes)}/{count} in {elapsed:.2f}s")
         print(f"  Throughput: {throughput:.1f} invoices/sec")
         print(f"  Rate limited: {rate_limited}")
 
@@ -97,8 +97,8 @@ class TestConcurrentInvoices:
 
         assert resp.status_code == 200
         data = resp.json()
-        assert data["total"] >= 1
-        print(f"\n✓ Listed {data['total']} pending invoices")
+        assert len(data["data"]) >= 1
+        print(f"\n\u2713 Listed {len(data['data'])} pending invoices")
 
     async def test_sequential_baseline(self, client: httpx.AsyncClient, test_merchant: dict):
         """5 sequential invoices for throughput comparison."""
@@ -124,4 +124,4 @@ class TestConcurrentInvoices:
         elapsed = time.monotonic() - start
 
         assert successes >= 3, f"Only {successes}/{count} sequential invoices succeeded"
-        print(f"\n✓ Sequential: {successes}/{count} invoices in {elapsed:.2f}s ({successes / elapsed:.1f}/s)")
+        print(f"\n\u2713 Sequential: {successes}/{count} invoices in {elapsed:.2f}s ({successes / elapsed:.1f}/s)")

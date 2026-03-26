@@ -1,7 +1,7 @@
-"""
-GhostBill — Invoice state machine tests.
+"""GhostBill — Invoice state machine tests.
 
 Tests all 7 invoice statuses and their valid/invalid transitions.
+Updated for Phase 6B cursor pagination ("data" + "has_more").
 
 Usage:
     cd /root/ghostbill && python3 -m pytest tests/state_machine_test.py -v
@@ -36,7 +36,7 @@ class TestValidTransitions:
         inv_after = await get_invoice(client, api_key, invoice_id)
         assert inv_after["status"] == "paid"
         assert await get_invoice_status_db(invoice_id) == "paid"
-        print("✓ pending → paid")
+        print("\u2713 pending \u2192 paid")
 
     async def test_pending_to_partially_paid(self, client: httpx.AsyncClient, test_merchant: dict):
         api_key = test_merchant["api_key_live"]
@@ -46,7 +46,7 @@ class TestValidTransitions:
         await update_invoice_status_db(inv["id"], "partially_paid")
 
         assert (await get_invoice(client, api_key, inv["id"]))["status"] == "partially_paid"
-        print("✓ pending → partially_paid")
+        print("\u2713 pending \u2192 partially_paid")
 
     async def test_pending_to_expired(self, client: httpx.AsyncClient, test_merchant: dict):
         api_key = test_merchant["api_key_live"]
@@ -55,7 +55,7 @@ class TestValidTransitions:
         await expire_invoice_db(inv["id"])
 
         assert (await get_invoice(client, api_key, inv["id"]))["status"] == "expired"
-        print("✓ pending → expired")
+        print("\u2713 pending \u2192 expired")
 
     async def test_pending_to_cancelled(self, client: httpx.AsyncClient, test_merchant: dict):
         api_key = test_merchant["api_key_live"]
@@ -64,7 +64,7 @@ class TestValidTransitions:
         resp = await client.post(f"/v1/invoices/{inv['id']}/cancel", headers=auth_headers(api_key))
         assert resp.status_code == 200
         assert resp.json()["status"] == "cancelled"
-        print("✓ pending → cancelled")
+        print("\u2713 pending \u2192 cancelled")
 
     async def test_partially_paid_to_paid(self, client: httpx.AsyncClient, test_merchant: dict):
         api_key = test_merchant["api_key_live"]
@@ -77,7 +77,7 @@ class TestValidTransitions:
         await update_invoice_status_db(inv["id"], "paid")
 
         assert (await get_invoice(client, api_key, inv["id"]))["status"] == "paid"
-        print("✓ partially_paid → paid")
+        print("\u2713 partially_paid \u2192 paid")
 
     async def test_partially_paid_to_overpaid(self, client: httpx.AsyncClient, test_merchant: dict):
         api_key = test_merchant["api_key_live"]
@@ -90,7 +90,7 @@ class TestValidTransitions:
         await update_invoice_status_db(inv["id"], "overpaid")
 
         assert (await get_invoice(client, api_key, inv["id"]))["status"] == "overpaid"
-        print("✓ partially_paid → overpaid")
+        print("\u2713 partially_paid \u2192 overpaid")
 
     async def test_expired_to_late_paid(self, client: httpx.AsyncClient, test_merchant: dict):
         api_key = test_merchant["api_key_live"]
@@ -103,7 +103,7 @@ class TestValidTransitions:
         await update_invoice_status_db(inv["id"], "late_paid")
 
         assert (await get_invoice(client, api_key, inv["id"]))["status"] == "late_paid"
-        print("✓ expired → late_paid")
+        print("\u2713 expired \u2192 late_paid")
 
 
 @pytest.mark.asyncio
@@ -117,7 +117,7 @@ class TestTerminalStates:
 
         resp = await client.post(f"/v1/invoices/{inv['id']}/cancel", headers=auth_headers(api_key))
         assert resp.status_code == 400
-        print("✓ paid is terminal")
+        print("\u2713 paid is terminal")
 
     async def test_cancelled_is_terminal(self, client: httpx.AsyncClient, test_merchant: dict):
         api_key = test_merchant["api_key_live"]
@@ -126,7 +126,7 @@ class TestTerminalStates:
 
         resp2 = await client.post(f"/v1/invoices/{inv['id']}/cancel", headers=auth_headers(api_key))
         assert resp2.status_code == 400
-        print("✓ cancelled is terminal")
+        print("\u2713 cancelled is terminal")
 
     async def test_overpaid_is_terminal(self, client: httpx.AsyncClient, test_merchant: dict):
         api_key = test_merchant["api_key_live"]
@@ -136,7 +136,7 @@ class TestTerminalStates:
 
         resp = await client.post(f"/v1/invoices/{inv['id']}/cancel", headers=auth_headers(api_key))
         assert resp.status_code == 400
-        print("✓ overpaid is terminal")
+        print("\u2713 overpaid is terminal")
 
     async def test_late_paid_is_terminal(self, client: httpx.AsyncClient, test_merchant: dict):
         api_key = test_merchant["api_key_live"]
@@ -147,7 +147,7 @@ class TestTerminalStates:
 
         resp = await client.post(f"/v1/invoices/{inv['id']}/cancel", headers=auth_headers(api_key))
         assert resp.status_code == 400
-        print("✓ late_paid is terminal")
+        print("\u2713 late_paid is terminal")
 
     async def test_expired_cannot_be_cancelled(self, client: httpx.AsyncClient, test_merchant: dict):
         api_key = test_merchant["api_key_live"]
@@ -156,7 +156,7 @@ class TestTerminalStates:
 
         resp = await client.post(f"/v1/invoices/{inv['id']}/cancel", headers=auth_headers(api_key))
         assert resp.status_code == 400
-        print("✓ expired cannot be cancelled")
+        print("\u2713 expired cannot be cancelled")
 
 
 @pytest.mark.asyncio
@@ -169,7 +169,7 @@ class TestInvalidTransitions:
 
         resp = await client.post(f"/v1/invoices/{inv['id']}/cancel", headers=auth_headers(api_key))
         assert resp.status_code == 400
-        print("✓ cannot cancel with payments")
+        print("\u2713 cannot cancel with payments")
 
     async def test_partially_paid_cannot_be_cancelled(self, client: httpx.AsyncClient, test_merchant: dict):
         api_key = test_merchant["api_key_live"]
@@ -179,7 +179,7 @@ class TestInvalidTransitions:
 
         resp = await client.post(f"/v1/invoices/{inv['id']}/cancel", headers=auth_headers(api_key))
         assert resp.status_code == 400
-        print("✓ partially_paid cannot be cancelled")
+        print("\u2713 partially_paid cannot be cancelled")
 
 
 @pytest.mark.asyncio
@@ -198,12 +198,12 @@ class TestStatusFiltering:
         for target in ["pending", "expired", "cancelled"]:
             resp = await client.get("/v1/invoices", params={"status": target, "limit": 10}, headers=auth_headers(api_key))
             assert resp.status_code == 200
-            assert resp.json()["total"] >= 1
-            for inv in resp.json()["invoices"]:
+            assert len(resp.json()["data"]) >= 1
+            for inv in resp.json()["data"]:
                 assert inv["status"] == target
-            print(f"✓ Filter '{target}': {resp.json()['total']} found")
+            print(f"\u2713 Filter '{target}': {len(resp.json()['data'])} found")
 
     async def test_invalid_status_filter(self, client: httpx.AsyncClient, test_merchant: dict):
         resp = await client.get("/v1/invoices", params={"status": "nonexistent"}, headers=auth_headers(test_merchant["api_key_live"]))
         assert resp.status_code == 400
-        print("✓ Invalid status → 400")
+        print("\u2713 Invalid status \u2192 400")

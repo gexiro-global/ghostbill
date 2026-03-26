@@ -1,6 +1,7 @@
-"""Webhook dispatch service — queue, delivery, retry.
+"""Webhook dispatch service — queue, delivery, retry, DLQ.
 
 Payload builders, HMAC signing, constants in webhook_payloads.py.
+Phase 6B: Dead Letter Queue — failed deliveries moved to DLQ after max retries.
 """
 
 import asyncio
@@ -12,15 +13,29 @@ from datetime import datetime, timezone
 from typing import Any
 
 import httpx
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tor_proxy import tor_proxy
-from app.db.models import Invoice, Merchant, Payment, Subscription, WebhookDelivery, WebhookStatus
+from app.db.models import (
+    Invoice,
+    Merchant,
+    Payment,
+    Subscription,
+    WebhookDeadLetter,
+    WebhookDelivery,
+    WebhookStatus,
+)
 from app.services.webhook_payloads import (
-    DELIVERY_TIMEOUT, JITTER_MAX, JITTER_MIN, MAX_ATTEMPTS,
-    build_invoice_payload, build_payment_payload, build_subscription_payload,
-    calculate_next_retry, sign_payload,
+    DELIVERY_TIMEOUT,
+    JITTER_MAX,
+    JITTER_MIN,
+    MAX_ATTEMPTS,
+    build_invoice_payload,
+    build_payment_payload,
+    build_subscription_payload,
+    calculate_next_retry,
+    sign_payload,
 )
 
 logger = logging.getLogger(__name__)
@@ -128,45 +143,47 @@ class WebhookService:
         return list((await db.execute(stmt)).scalars().all())
 
     async def process_delivery_result(self, db: AsyncSession, delivery: WebhookDelivery, success: bool) -> None:
+        """Process delivery result. On max retries → DLQ instead of just failed."""
         delivery.attempts += 1
         delivery.last_attempt_at = datetime.now(timezone.utc)
         if success:
             delivery.status = WebhookStatus.delivered
             delivery.next_retry_at = None
         elif delivery.attempts >= delivery.max_attempts:
-            delivery.status = WebhookStatus.failed
-            delivery.next_retry_at = None
-            logger.warning("Webhook exhausted: %s, attempts=%d", delivery.id, delivery.attempts)
+            # Phase 6B: DLQ instead of just 'failed'
+            await self._move_to_dlq(db, delivery)
         else:
             delivery.next_retry_at = calculate_next_retry(delivery.attempts)
         await db.flush()
 
-    async def list_deliveries(
-        self, db: AsyncSession, merchant_id: uuid.UUID,
-        invoice_id: uuid.UUID | None = None, status: WebhookStatus | None = None,
-        limit: int = 50, offset: int = 0,
-    ) -> tuple[list[WebhookDelivery], int]:
-        limit, offset = max(1, min(limit, 100)), max(0, offset)
-        where = [WebhookDelivery.merchant_id == merchant_id]
-        if invoice_id is not None:
-            where.append(WebhookDelivery.invoice_id == invoice_id)
-        if status is not None:
-            where.append(WebhookDelivery.status == status)
-        total = (await db.execute(select(func.count(WebhookDelivery.id)).where(*where))).scalar_one()
-        deliveries = list((await db.execute(
-            select(WebhookDelivery).where(*where)
-            .order_by(WebhookDelivery.created_at.desc()).limit(limit).offset(offset)
-        )).scalars().all())
-        return deliveries, total
+    async def _move_to_dlq(self, db: AsyncSession, delivery: WebhookDelivery) -> None:
+        """Move failed delivery to Dead Letter Queue."""
+        delivery.status = WebhookStatus.dead_lettered
+        delivery.next_retry_at = None
+
+        dlq_entry = WebhookDeadLetter(
+            delivery_id=delivery.id,
+            merchant_id=delivery.merchant_id,
+            event_type=delivery.event_type,
+            payload=delivery.payload,
+            original_created_at=delivery.created_at,
+            last_error=delivery.response_body or "Max retries exceeded",
+        )
+        db.add(dlq_entry)
+        logger.warning(
+            "Webhook dead-lettered: %s, event=%s, merchant=%s",
+            delivery.id, delivery.event_type, delivery.merchant_id,
+        )
 
     async def retry_delivery(
         self, db: AsyncSession, merchant_id: uuid.UUID, delivery_id: uuid.UUID,
     ) -> WebhookDelivery | None:
+        """Retry a failed or dead_lettered delivery."""
         delivery = (await db.execute(
             select(WebhookDelivery).where(
                 WebhookDelivery.id == delivery_id, WebhookDelivery.merchant_id == merchant_id)
         )).scalar_one_or_none()
-        if delivery is None or delivery.status != WebhookStatus.failed:
+        if delivery is None or delivery.status not in (WebhookStatus.failed, WebhookStatus.dead_lettered):
             return None
         delivery.status = WebhookStatus.pending
         delivery.attempts = 0

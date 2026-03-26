@@ -55,6 +55,7 @@ class WebhookStatus(str, enum.Enum):
     pending = "pending"
     delivered = "delivered"
     failed = "failed"
+    dead_lettered = "dead_lettered"  # Phase 6B: DLQ
 
 
 # ── Models ─────────────────────────────────────────────────────────────────────
@@ -391,6 +392,45 @@ class WebhookDelivery(Base):
             postgresql_where=(status == WebhookStatus.pending),
         ),
         Index("ix_webhook_deliveries_merchant", "merchant_id"),
+    )
+
+
+class WebhookDeadLetter(Base):
+    """Phase 6B: Dead Letter Queue for webhook deliveries that exhausted retries."""
+    __tablename__ = "webhook_dead_letters"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    delivery_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("webhook_deliveries.id"), nullable=False
+    )
+    merchant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    original_created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    dead_lettered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_retry_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("idx_dlq_merchant", "merchant_id", "resolved"),
     )
 
 

@@ -6,6 +6,8 @@ Grace logic:
     soft (3d default): active → past_due
     hard (7d default): past_due → expired
     recovery: past_due with paid invoice → active
+
+Phase 6B: fires subscription.expired event (not cancelled) on hard grace.
 """
 
 import logging
@@ -83,7 +85,7 @@ async def check_grace_periods(db: AsyncSession) -> dict[str, int]:
         counts["soft"] += 1
         logger.info("Subscription %s → past_due (soft grace)", sub.id)
 
-    # Hard grace: past_due → expired
+    # Hard grace: past_due → expired (Phase 6B: fires subscription.expired, NOT cancelled)
     hard_stmt = (
         select(Subscription)
         .join(SubscriptionPayment, SubscriptionPayment.subscription_id == Subscription.id)
@@ -101,6 +103,15 @@ async def check_grace_periods(db: AsyncSession) -> dict[str, int]:
         sub.status = SubscriptionStatus.expired
         counts["hard"] += 1
         logger.info("Subscription %s → expired (hard grace)", sub.id)
+        # Phase 6B: fire subscription.expired event
+        try:
+            from app.services.webhook_service import webhook_service
+            await webhook_service.dispatch_subscription_event(
+                db=db, event_type="subscription.expired",
+                subscription=sub, reason="hard_grace_exceeded",
+            )
+        except Exception as exc:
+            logger.warning("Failed to fire subscription.expired for %s: %s", sub.id, exc)
 
     # Recovery: past_due with paid invoice → active
     recovery_stmt = (

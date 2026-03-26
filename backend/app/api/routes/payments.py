@@ -1,5 +1,4 @@
-"""
-Payment API routes — read-only endpoints.
+"""Payment API routes — read-only endpoints with cursor pagination.
 
 Endpoints:
     GET /v1/payments            — list payments for merchant (filter: invoice_id, status)
@@ -9,23 +8,24 @@ All endpoints require Bearer auth (merchant scope).
 """
 
 import uuid
-from datetime import datetime
-from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_merchant
-from app.db.models import Merchant, PaymentStatus
+from app.db.models import Invoice, Merchant, Payment, PaymentStatus
 from app.dependencies import get_db
 from app.services.payment_service import payment_service
+from app.utils.pagination import paginate_cursor, validate_cursor_params
 
 router = APIRouter(prefix="/payments", tags=["payments"])
 
 
-# ─── Schemas ─────────────────────────────────────────────────────────────────
+# ─── Schemas ──────────────────────────────────────────────────────────
+
 
 class PaymentResponse(BaseModel):
     id: str
@@ -43,14 +43,13 @@ class PaymentResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class PaymentListResponse(BaseModel):
-    payments: list[PaymentResponse]
-    total: int
-    limit: int
-    offset: int
+class PaymentCursorResponse(BaseModel):
+    data: list[PaymentResponse]
+    has_more: bool
 
 
-# ─── Helpers ─────────────────────────────────────────────────────────────────
+# ─── Helpers ──────────────────────────────────────────────────────────
+
 
 def _payment_to_response(payment) -> PaymentResponse:
     return PaymentResponse(
@@ -68,19 +67,22 @@ def _payment_to_response(payment) -> PaymentResponse:
     )
 
 
-# ─── Routes ──────────────────────────────────────────────────────────────────
+# ─── Routes ───────────────────────────────────────────────────────────
 
-@router.get("", response_model=PaymentListResponse)
+
+@router.get("", response_model=PaymentCursorResponse)
 async def list_payments(
     invoice_id: Optional[str] = Query(None, description="Filter by invoice ID"),
     status: Optional[str] = Query(None, description="Filter by status: detected, confirmed, orphaned"),
     limit: int = Query(50, ge=1, le=100),
-    offset: int = Query(0, ge=0),
+    starting_after: uuid.UUID | None = Query(default=None),
+    ending_before: uuid.UUID | None = Query(default=None),
     merchant: Merchant = Depends(get_current_merchant),
     db: AsyncSession = Depends(get_db),
 ):
-    """List payments for the authenticated merchant."""
-    # Parse optional invoice_id
+    """List payments for the authenticated merchant with cursor pagination."""
+    validate_cursor_params(starting_after, ending_before)
+
     parsed_invoice_id: uuid.UUID | None = None
     if invoice_id:
         try:
@@ -88,7 +90,6 @@ async def list_payments(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid invoice_id format.")
 
-    # Parse optional status
     parsed_status: PaymentStatus | None = None
     if status:
         try:
@@ -99,20 +100,25 @@ async def list_payments(
                 detail=f"Invalid status. Must be one of: {', '.join(s.value for s in PaymentStatus)}",
             )
 
-    payments, total = await payment_service.list_payments(
-        db=db,
-        merchant_id=merchant.id,
-        invoice_id=parsed_invoice_id,
-        status=parsed_status,
-        limit=limit,
-        offset=offset,
+    # Build base query: payments scoped to merchant via invoice join
+    base_query = (
+        select(Payment)
+        .join(Invoice, Payment.invoice_id == Invoice.id)
+        .where(Invoice.merchant_id == merchant.id)
+    )
+    if parsed_invoice_id is not None:
+        base_query = base_query.where(Payment.invoice_id == parsed_invoice_id)
+    if parsed_status is not None:
+        base_query = base_query.where(Payment.status == parsed_status)
+
+    result = await paginate_cursor(
+        db=db, base_query=base_query, model=Payment,
+        limit=limit, starting_after=starting_after, ending_before=ending_before,
     )
 
-    return PaymentListResponse(
-        payments=[_payment_to_response(p) for p in payments],
-        total=total,
-        limit=limit,
-        offset=offset,
+    return PaymentCursorResponse(
+        data=[_payment_to_response(p) for p in result["data"]],
+        has_more=result["has_more"],
     )
 
 
@@ -129,8 +135,6 @@ async def get_payment(
         raise HTTPException(status_code=400, detail="Invalid payment ID format.")
 
     payment = await payment_service.get_payment(db, merchant.id, pid)
-
     if payment is None:
         raise HTTPException(status_code=404, detail="Payment not found.")
-
     return _payment_to_response(payment)

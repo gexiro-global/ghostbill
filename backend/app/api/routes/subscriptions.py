@@ -1,7 +1,7 @@
 """Subscription API routes.
 
 POST   /v1/subscriptions              — Create
-GET    /v1/subscriptions              — List
+GET    /v1/subscriptions              — List (cursor pagination)
 GET    /v1/subscriptions/{id}         — Detail + payments
 PATCH  /v1/subscriptions/{id}         — Update (pending changes) [Phase 6A]
 POST   /v1/subscriptions/{id}/pause   — Pause
@@ -14,17 +14,18 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_merchant
 from app.api.routes.subscription_schemas import (
     SubscriptionCreateRequest,
+    SubscriptionCursorResponse,
     SubscriptionDetailResponse,
-    SubscriptionListResponse,
     SubscriptionResponse,
     SubscriptionUpdateRequest,
 )
-from app.db.models import Merchant, SubscriptionStatus
+from app.db.models import Merchant, Subscription, SubscriptionStatus
 from app.db.session import get_db
 from app.services.invoice_service import WalletUnavailableError
 from app.services.subscription_exceptions import (
@@ -33,19 +34,19 @@ from app.services.subscription_exceptions import (
     SubscriptionValidationError,
 )
 from app.services.subscription_service import subscription_service
-from app.services.subscription_update import update_subscription, _UNSET
-from app.services.webhook_service import webhook_service
+from app.services.subscription_update import update_subscription
 from app.services.webhook_payloads import build_subscription_updated_payload
+from app.services.webhook_service import webhook_service
+from app.utils.pagination import paginate_cursor, validate_cursor_params
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/subscriptions", tags=["subscriptions"])
 
 
-# ─── Helpers ─────────────────────────────────────────────────────────────
+# ─── Helpers ─────────────────────────────────────────────────────────
 
 
 def _build_pending_changes(sub):
-    """Build pending_changes dict from subscription model."""
     has_any = any([
         sub.pending_amount_atomic is not None,
         sub.pending_interval_days is not None,
@@ -96,7 +97,7 @@ def _parse_start_at(raw: str | None) -> datetime | None:
         raise HTTPException(status_code=400, detail=f"Invalid start_at: {raw!r}")
 
 
-# ─── Routes ──────────────────────────────────────────────────────────────
+# ─── Routes ──────────────────────────────────────────────────────────
 
 
 @router.post("", response_model=SubscriptionDetailResponse, status_code=201)
@@ -130,15 +131,19 @@ async def create_subscription(
         **resp.model_dump(), customer=detail["customer"], payments=detail["payments"])
 
 
-@router.get("", response_model=SubscriptionListResponse)
+@router.get("", response_model=SubscriptionCursorResponse)
 async def list_subscriptions(
     merchant: Merchant = Depends(get_current_merchant),
     db: AsyncSession = Depends(get_db),
     sub_status: str | None = Query(default=None, alias="status"),
     customer_id: uuid.UUID | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
+    starting_after: uuid.UUID | None = Query(default=None),
+    ending_before: uuid.UUID | None = Query(default=None),
 ):
+    """List subscriptions with cursor pagination."""
+    validate_cursor_params(starting_after, ending_before)
+
     status_filter = None
     if sub_status is not None:
         try:
@@ -146,13 +151,22 @@ async def list_subscriptions(
         except ValueError:
             valid = ", ".join(s.value for s in SubscriptionStatus)
             raise HTTPException(status_code=400, detail=f"Invalid status. Valid: {valid}")
-    subs, total = await subscription_service.list_subscriptions(
-        db=db, merchant_id=merchant.id, status=status_filter,
-        customer_id=customer_id, limit=limit, offset=offset,
+
+    base_query = select(Subscription).where(Subscription.merchant_id == merchant.id)
+    if status_filter is not None:
+        base_query = base_query.where(Subscription.status == status_filter)
+    if customer_id is not None:
+        base_query = base_query.where(Subscription.customer_id == customer_id)
+
+    result = await paginate_cursor(
+        db=db, base_query=base_query, model=Subscription,
+        limit=limit, starting_after=starting_after, ending_before=ending_before,
     )
-    return SubscriptionListResponse(
-        subscriptions=[_sub_to_response(s) for s in subs],
-        total=total, limit=limit, offset=offset)
+
+    return SubscriptionCursorResponse(
+        data=[_sub_to_response(s) for s in result["data"]],
+        has_more=result["has_more"],
+    )
 
 
 @router.get("/{subscription_id}", response_model=SubscriptionDetailResponse)
@@ -180,23 +194,14 @@ async def patch_subscription(
     """Update subscription with pending changes (applied at next renewal)."""
     try:
         sub = await subscription_service._get_for_update(db, merchant.id, subscription_id)
-        # Build kwargs — only pass fields that were explicitly set in body
         kwargs = {}
         body_data = body.model_dump(exclude_unset=True)
-        if "amount_xmr" in body_data:
-            kwargs["amount_xmr"] = body_data["amount_xmr"]
-        if "interval_days" in body_data:
-            kwargs["interval_days"] = body_data["interval_days"]
-        if "grace_days_soft" in body_data:
-            kwargs["grace_days_soft"] = body_data["grace_days_soft"]
-        if "grace_days_hard" in body_data:
-            kwargs["grace_days_hard"] = body_data["grace_days_hard"]
-        if "metadata" in body_data:
-            kwargs["metadata"] = body_data["metadata"]
+        for field in ("amount_xmr", "interval_days", "grace_days_soft", "grace_days_hard", "metadata"):
+            if field in body_data:
+                kwargs[field] = body_data[field]
 
         sub = await update_subscription(db=db, sub=sub, **kwargs)
 
-        # Fire webhook if any financial field changed
         has_financial = any(k in body_data for k in ("amount_xmr", "interval_days", "grace_days_soft", "grace_days_hard"))
         if has_financial:
             payload = build_subscription_updated_payload(sub)
@@ -213,7 +218,6 @@ async def patch_subscription(
         raise HTTPException(status_code=409, detail=str(exc))
     except SubscriptionValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-
     return _sub_to_response(sub)
 
 

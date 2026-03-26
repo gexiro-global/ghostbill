@@ -1,15 +1,7 @@
-"""
-GhostBill — End-to-end simulated test.
+"""GhostBill — End-to-end simulated test.
 
-Full flow WITHOUT real XMR:
-    1. Register merchant (fresh)
-    2. Set webhook URL
-    3. Create invoice
-    4. Simulate payment (DB INSERT)
-    5. Update invoice status
-    6. Verify payment listing
-    7. API key management (create, list, revoke)
-    8. HMAC-SHA256 signature verification
+Full flow WITHOUT real XMR.
+Updated for Phase 6B cursor pagination ("data" + "has_more").
 
 Usage:
     cd /root/ghostbill && python3 -m pytest tests/e2e_simulated_test.py -v
@@ -65,13 +57,13 @@ class TestE2EFullFlow:
         webhook_secret = reg_data["webhook_secret"]
 
         assert api_key.startswith("gb_live_")
-        print(f"\n✓ Step 1: Merchant registered: {merchant_id}")
+        print(f"\n\u2713 Step 1: Merchant registered: {merchant_id}")
 
         # Step 2: Verify profile
         me_resp = await client.get("/v1/merchants/me", headers=auth_headers(api_key))
         assert me_resp.status_code == 200
         assert me_resp.json()["id"] == merchant_id
-        print("✓ Step 2: Merchant profile verified")
+        print("\u2713 Step 2: Merchant profile verified")
 
         # Step 3: Create invoice
         inv = await create_invoice(
@@ -83,7 +75,7 @@ class TestE2EFullFlow:
         assert inv["status"] == "pending"
         assert inv["amount_atomic"] == 750000000000
         assert inv["address"] is not None
-        print(f"✓ Step 3: Invoice created: {invoice_id}")
+        print(f"\u2713 Step 3: Invoice created: {invoice_id}")
 
         # Step 4: Simulate payment (DB INSERT)
         tx_hash = generate_fake_tx_hash()
@@ -92,7 +84,7 @@ class TestE2EFullFlow:
             tx_hash=tx_hash, status="confirmed",
             confirmations=10, block_height=3200000,
         )
-        print(f"✓ Step 4: Payment simulated: tx={tx_hash[:16]}...")
+        print(f"\u2713 Step 4: Payment simulated: tx={tx_hash[:16]}...")
 
         # Step 5: Update invoice status to paid
         await update_invoice_status_db(invoice_id, "paid")
@@ -101,36 +93,36 @@ class TestE2EFullFlow:
 
         inv_after = await get_invoice(client, api_key, invoice_id)
         assert inv_after["status"] == "paid"
-        print("✓ Step 5: Invoice status → paid")
+        print("\u2713 Step 5: Invoice status \u2192 paid")
 
         # Step 6: Verify cumulative sum
         total = await sum_payments_for_invoice(invoice_id)
         assert total == 750000000000
-        print(f"✓ Step 6: Cumulative sum verified: {total}")
+        print(f"\u2713 Step 6: Cumulative sum verified: {total}")
 
-        # Step 7: Verify payment via API
+        # Step 7: Verify payment via API (cursor pagination)
         payments_resp = await client.get(
             "/v1/payments", params={"invoice_id": invoice_id},
             headers=auth_headers(api_key),
         )
         assert payments_resp.status_code == 200
-        assert payments_resp.json()["total"] >= 1
-        found = any(p["tx_hash"] == tx_hash for p in payments_resp.json()["payments"])
+        assert len(payments_resp.json()["data"]) >= 1
+        found = any(p["tx_hash"] == tx_hash for p in payments_resp.json()["data"])
         assert found
-        print("✓ Step 7: Payment verified via API")
+        print("\u2713 Step 7: Payment verified via API")
 
-        # Step 8: List invoices
+        # Step 8: List invoices (cursor pagination)
         list_resp = await client.get(
             "/v1/invoices", params={"status": "paid", "limit": 10},
             headers=auth_headers(api_key),
         )
         assert list_resp.status_code == 200
-        assert list_resp.json()["total"] >= 1
-        print("✓ Step 8: Paid invoice found in listing")
+        assert len(list_resp.json()["data"]) >= 1
+        print("\u2713 Step 8: Paid invoice found in listing")
 
         # Cleanup
         await cleanup_merchant_data(merchant_id)
-        print("✓ Cleanup complete")
+        print("\u2713 Cleanup complete")
 
     async def test_multi_payment_e2e(self, client: httpx.AsyncClient):
         """E2E: Multiple payments completing an invoice."""
@@ -156,7 +148,7 @@ class TestE2EFullFlow:
 
         inv_partial = await get_invoice(client, api_key, invoice_id)
         assert inv_partial["status"] == "partially_paid"
-        print("\n✓ First payment 0.4 XMR → partially_paid")
+        print("\n\u2713 First payment 0.4 XMR \u2192 partially_paid")
 
         # Payment 2: 0.6 XMR (total = 1.0 XMR)
         await insert_simulated_payment(invoice_id, amount_atomic=600000000000, status="confirmed", confirmations=10)
@@ -167,14 +159,14 @@ class TestE2EFullFlow:
 
         inv_paid = await get_invoice(client, api_key, invoice_id)
         assert inv_paid["status"] == "paid"
-        print("✓ Second payment 0.6 XMR → paid")
+        print("\u2713 Second payment 0.6 XMR \u2192 paid")
 
         payments_resp = await client.get(
             "/v1/payments", params={"invoice_id": invoice_id},
             headers=auth_headers(api_key),
         )
-        assert payments_resp.json()["total"] == 2
-        print("✓ 2 payments verified via API")
+        assert len(payments_resp.json()["data"]) == 2
+        print("\u2713 2 payments verified via API")
 
         await cleanup_merchant_data(merchant_id)
 
@@ -183,7 +175,7 @@ class TestE2EFullFlow:
 class TestAPIKeyManagement:
 
     async def test_api_key_lifecycle(self, client: httpx.AsyncClient, test_merchant: dict):
-        """Create → list → use → revoke → verify revoked."""
+        """Create \u2192 list \u2192 use \u2192 revoke \u2192 verify revoked."""
         api_key = test_merchant["api_key_live"]
 
         # Create new key
@@ -198,30 +190,30 @@ class TestAPIKeyManagement:
         new_key = key_data["key"]
         new_key_id = key_data["id"]
         assert new_key.startswith("gb_live_")
-        print(f"\n✓ API key created: {new_key[:16]}...")
+        print(f"\n\u2713 API key created: {new_key[:16]}...")
 
-        # List keys
+        # List keys (cursor pagination)
         list_resp = await client.get("/v1/api-keys", headers=auth_headers(api_key))
         assert list_resp.status_code == 200
-        key_list = list_resp.json().get("api_keys", [])
+        key_list = list_resp.json().get("data", [])
         found = any(k.get("id") == new_key_id for k in key_list)
         assert found
-        print(f"✓ API key found in listing ({len(key_list)} total)")
+        print(f"\u2713 API key found in listing ({len(key_list)} total)")
 
         # Use new key
         me_resp = await client.get("/v1/merchants/me", headers=auth_headers(new_key))
         assert me_resp.status_code == 200
-        print("✓ New API key works")
+        print("\u2713 New API key works")
 
         # Revoke key
         revoke_resp = await client.delete(f"/v1/api-keys/{new_key_id}", headers=auth_headers(api_key))
         assert revoke_resp.status_code == 200
-        print("✓ API key revoked")
+        print("\u2713 API key revoked")
 
         # Verify revoked
         me_resp2 = await client.get("/v1/merchants/me", headers=auth_headers(new_key))
         assert me_resp2.status_code == 401
-        print("✓ Revoked key returns 401")
+        print("\u2713 Revoked key returns 401")
 
 
 @pytest.mark.asyncio
@@ -236,13 +228,13 @@ class TestWebhookHMAC:
         assert verify_webhook_signature(payload_bytes, secret, signature)
         assert not verify_webhook_signature(payload_bytes + b"x", secret, signature)
         assert not verify_webhook_signature(payload_bytes, "wrong_secret", signature)
-        print("\n✓ HMAC-SHA256 verification correct")
+        print("\n\u2713 HMAC-SHA256 verification correct")
 
     async def test_webhook_header_format(self):
         required = ["Content-Type", "X-GhostBill-Signature", "X-GhostBill-Event-ID", "X-GhostBill-Event-Type"]
         for h in required:
             assert isinstance(h, str) and len(h) > 0
-        print("✓ Webhook header names match spec")
+        print("\u2713 Webhook header names match spec")
 
 
 @pytest.mark.asyncio
@@ -254,7 +246,7 @@ class TestMerchantUpdate:
         resp = await client.patch("/v1/merchants/me", json={"name": new_name}, headers=auth_headers(api_key))
         assert resp.status_code == 200
         assert resp.json()["name"] == new_name
-        print(f"\n✓ Name updated: {new_name}")
+        print(f"\n\u2713 Name updated: {new_name}")
 
     async def test_update_webhook_url(self, client: httpx.AsyncClient, test_merchant: dict):
         api_key = test_merchant["api_key_live"]
@@ -264,20 +256,20 @@ class TestMerchantUpdate:
             headers=auth_headers(api_key),
         )
         assert resp.status_code == 200
-        print("✓ Webhook URL updated")
+        print("\u2713 Webhook URL updated")
 
     async def test_regenerate_webhook_secret(self, client: httpx.AsyncClient, test_merchant: dict):
         api_key = test_merchant["api_key_live"]
         resp = await client.post("/v1/merchants/me/webhook-secret", headers=auth_headers(api_key))
         assert resp.status_code == 200
         assert len(resp.json()["webhook_secret"]) > 0
-        print("✓ Webhook secret regenerated")
+        print("\u2713 Webhook secret regenerated")
 
     async def test_empty_update_rejected(self, client: httpx.AsyncClient, test_merchant: dict):
         api_key = test_merchant["api_key_live"]
         resp = await client.patch("/v1/merchants/me", json={}, headers=auth_headers(api_key))
         assert resp.status_code == 400
-        print("✓ Empty update rejected (400)")
+        print("\u2713 Empty update rejected (400)")
 
 
 @pytest.mark.asyncio
@@ -287,13 +279,13 @@ class TestPublicEndpoints:
         resp = await client.get("/health")
         assert resp.status_code == 200
         assert resp.json()["status"] == "healthy"
-        print(f"\n✓ Health: {resp.json()}")
+        print(f"\n\u2713 Health: {resp.json()}")
 
     async def test_price_endpoint(self, client: httpx.AsyncClient):
         resp = await client.get("/v1/price")
         assert resp.status_code == 200
         assert isinstance(resp.json(), dict)
-        print(f"✓ Price: {resp.json()}")
+        print(f"\u2713 Price: {resp.json()}")
 
 
 @pytest.mark.asyncio
@@ -307,10 +299,10 @@ class TestInvoiceMetadata:
 
         inv_get = await get_invoice(client, api_key, inv["id"])
         assert inv_get["metadata"]["order_id"] == "ORD-99999"
-        print("\n✓ Metadata preserved")
+        print("\n\u2713 Metadata preserved")
 
     async def test_invoice_without_metadata(self, client: httpx.AsyncClient, test_merchant: dict):
         api_key = test_merchant["api_key_live"]
         inv = await create_invoice(client, api_key, amount_xmr="0.1", metadata=None)
         assert inv["metadata"] is None
-        print("✓ No metadata → null")
+        print("\u2713 No metadata \u2192 null")

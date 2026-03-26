@@ -12,7 +12,7 @@ from uuid import UUID
 from app.db.models import Invoice, Payment, Subscription
 
 
-# ─── Constants ─────────────────────────────────────────────────────────────
+# ─── Constants ────────────────────────────────────────────────────────
 
 MAX_ATTEMPTS: int = 7
 DELIVERY_TIMEOUT: float = 10.0
@@ -20,44 +20,44 @@ RETRY_DELAYS: list[int] = [60, 300, 1800, 7200, 43200, 86400]
 JITTER_MIN: float = 0.05
 JITTER_MAX: float = 0.2
 
-# Valid event types (14 total — Phase 6A)
+# Valid event types (17 total — Phase 6B)
 VALID_EVENTS: list[str] = [
     "payment.detected", "payment.confirmed", "payment.orphaned",
     "invoice.paid", "invoice.expired", "invoice.partially_paid",
     "invoice.overpaid", "invoice.late_paid",
     "subscription.created", "subscription.renewed", "subscription.past_due",
     "subscription.cancelled", "subscription.payment_confirmed",
-    "subscription.updated",  # Phase 6A
+    "subscription.updated",    # Phase 6A
+    "subscription.paused",     # Phase 6B
+    "subscription.resumed",    # Phase 6B
+    "subscription.expired",    # Phase 6B
 ]
 
 
-# ─── HMAC Signing ─────────────────────────────────────────────────────────
+# ─── HMAC Signing ─────────────────────────────────────────────────────
 
 
 def sign_payload(payload_bytes: bytes, secret: str) -> str:
-    """HMAC-SHA256 signature for webhook payload."""
     return hmac.new(
         key=secret.encode("utf-8"), msg=payload_bytes, digestmod=hashlib.sha256,
     ).hexdigest()
 
 
 def verify_signature(payload_bytes: bytes, secret: str, signature: str) -> bool:
-    """Verify HMAC-SHA256 signature (constant-time)."""
     return hmac.compare_digest(sign_payload(payload_bytes, secret), signature)
 
 
-# ─── Retry Schedule ──────────────────────────────────────────────────────
+# ─── Retry Schedule ──────────────────────────────────────────────────
 
 
 def calculate_next_retry(attempt_count: int) -> datetime | None:
-    """Next retry datetime, or None if exhausted."""
     idx = attempt_count - 1
     if idx >= len(RETRY_DELAYS):
         return None
     return datetime.now(timezone.utc) + timedelta(seconds=RETRY_DELAYS[idx])
 
 
-# ─── Payload Builders ────────────────────────────────────────────────────
+# ─── Payload Builders ────────────────────────────────────────────────
 
 
 def build_payment_payload(payment: Payment, invoice: Invoice) -> dict[str, Any]:

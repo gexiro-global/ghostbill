@@ -55,8 +55,7 @@ class SubscriptionDetailResponse(SubscriptionResponse):
     payments: list[dict] = []
 
 
-class SubscriptionListResponse(BaseModel):
-    subscriptions: list[SubscriptionResponse]
-    total: int
-    limit: int
-    offset: int
+class SubscriptionCursorResponse(BaseModel):
+    """Phase 6B: cursor pagination response."""
+    data: list[SubscriptionResponse]
+    has_more: bool

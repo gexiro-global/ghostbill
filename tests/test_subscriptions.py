@@ -2,6 +2,7 @@
 
 Covers: create, actions (pause/resume/cancel), PATCH (pending changes),
         list/detail, renewal simulation via trigger-renewal endpoint.
+Updated for Phase 6B cursor pagination ("data" + "has_more").
 
 Usage:
     cd /root/ghostbill && python3 -m pytest tests/test_subscriptions.py -v
@@ -25,7 +26,7 @@ from tests.conftest import (
 BASE_URL = "http://127.0.0.1:8013"
 
 
-# ─── Helpers ─────────────────────────────────────────────────────────────
+# ─── Helpers ──────────────────────────────────────────────────────────
 
 
 async def _create_customer(client, api_key, ext_id=None):
@@ -59,7 +60,7 @@ async def _trigger_renewal(subscription_id: str | None = None):
     return resp
 
 
-# ─── Create Tests ────────────────────────────────────────────────────────
+# ─── Create Tests ─────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -110,7 +111,7 @@ class TestSubscriptionCreate:
         assert resp.status_code == 400
 
 
-# ─── Actions Tests ───────────────────────────────────────────────────────
+# ─── Actions Tests ────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -167,7 +168,7 @@ class TestSubscriptionActions:
         assert resp.status_code == 409
 
 
-# ─── PATCH Tests ─────────────────────────────────────────────────────────
+# ─── PATCH Tests ──────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -258,7 +259,7 @@ class TestSubscriptionPatch:
         assert resp.status_code == 400
 
 
-# ─── Query Tests ─────────────────────────────────────────────────────────
+# ─── Query Tests (updated for cursor pagination) ────────────────────
 
 
 @pytest.mark.asyncio
@@ -268,8 +269,8 @@ class TestSubscriptionQuery:
         key = test_merchant["api_key_live"]
         resp = await client.get("/v1/subscriptions", headers=auth_headers(key))
         assert resp.status_code == 200
-        assert "subscriptions" in resp.json()
-        assert "total" in resp.json()
+        assert "data" in resp.json()
+        assert "has_more" in resp.json()
 
     async def test_list_filter_by_status(self, client, test_merchant):
         key = test_merchant["api_key_live"]
@@ -277,7 +278,7 @@ class TestSubscriptionQuery:
         await _create_subscription(client, key, cust["id"])
         resp = await client.get("/v1/subscriptions?status=active", headers=auth_headers(key))
         assert resp.status_code == 200
-        for s in resp.json()["subscriptions"]:
+        for s in resp.json()["data"]:
             assert s["status"] == "active"
 
     async def test_get_detail(self, client, test_merchant):
@@ -292,7 +293,7 @@ class TestSubscriptionQuery:
         assert data["billing_anchor_at"] is not None
 
 
-# ─── Renewal Tests ───────────────────────────────────────────────────────
+# ─── Renewal Tests ────────────────────────────────────────────────────
 # Strategy: create with future start_at (no first invoice), then set
 # next_due_at to past via DB, then trigger renewal. This avoids conflicts
 # with existing subscription_payments from the first invoice.
@@ -302,7 +303,7 @@ class TestSubscriptionQuery:
 class TestSubscriptionRenewal:
 
     async def test_trigger_renewal_single(self, client, test_merchant):
-        """Create sub (future start) → set next_due to past → trigger → renewed=1."""
+        """Create sub (future start) \u2192 set next_due to past \u2192 trigger \u2192 renewed=1."""
         key = test_merchant["api_key_live"]
         cust = await _create_customer(client, key)
         # Future start = no immediate first invoice
@@ -325,7 +326,7 @@ class TestSubscriptionRenewal:
         assert data["renewed"] == 1, f"Expected renewed=1, got: {data}"
 
     async def test_pending_changes_applied_on_renewal(self, client, test_merchant):
-        """PATCH amount → trigger renewal → verify amount updated."""
+        """PATCH amount \u2192 trigger renewal \u2192 verify amount updated."""
         key = test_merchant["api_key_live"]
         cust = await _create_customer(client, key)
         # Future start = no first invoice

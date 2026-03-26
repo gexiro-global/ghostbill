@@ -5,6 +5,8 @@ Split modules:
     subscription_renewal.py — invoice creation, billing anchor
     subscription_grace.py — grace periods, payment hook
     subscription_exceptions.py — errors, state machine
+
+Phase 6B: fires subscription.paused/resumed webhook events.
 """
 
 import logging
@@ -95,7 +97,7 @@ class SubscriptionService:
 
         return sub
 
-    # ── Get / List ───────────────────────────────────────────────────
+    # ── Get / List ────────────────────────────────────────────────────
 
     async def get_subscription(
         self, db: AsyncSession, merchant_id: uuid.UUID, subscription_id: uuid.UUID,
@@ -153,7 +155,7 @@ class SubscriptionService:
         )).scalars().all())
         return subs, total
 
-    # ── State Transitions ───────────────────────────────────────────
+    # ── State Transitions (with webhook events) ───────────────────
 
     async def pause_subscription(
         self, db: AsyncSession, merchant_id: uuid.UUID, subscription_id: uuid.UUID,
@@ -164,6 +166,8 @@ class SubscriptionService:
                 f"Cannot pause subscription with status '{sub.status.value}'.")
         sub.status = SubscriptionStatus.paused
         await db.flush()
+        # Phase 6B: fire subscription.paused event
+        await self._fire_lifecycle_event(db, "subscription.paused", sub, reason="merchant_action")
         return sub
 
     async def resume_subscription(
@@ -178,6 +182,8 @@ class SubscriptionService:
             sub.next_due_at = now
         sub.status = SubscriptionStatus.active
         await db.flush()
+        # Phase 6B: fire subscription.resumed event
+        await self._fire_lifecycle_event(db, "subscription.resumed", sub, reason="merchant_action")
         return sub
 
     async def cancel_subscription(
@@ -203,7 +209,7 @@ class SubscriptionService:
         await db.flush()
         return sub
 
-    # ── Helper ───────────────────────────────────────────────────────
+    # ── Helpers ─────────────────────────────────────────────────────
 
     async def _get_for_update(
         self, db: AsyncSession, merchant_id: uuid.UUID, subscription_id: uuid.UUID,
@@ -217,6 +223,18 @@ class SubscriptionService:
         if sub is None:
             raise SubscriptionNotFoundError(f"Subscription {subscription_id} not found.")
         return sub
+
+    async def _fire_lifecycle_event(
+        self, db: AsyncSession, event_type: str, sub: Subscription,
+        reason: str | None = None,
+    ) -> None:
+        """Fire a subscription lifecycle webhook event."""
+        try:
+            from app.services.webhook_service import webhook_service
+            await webhook_service.dispatch_subscription_event(
+                db=db, event_type=event_type, subscription=sub, reason=reason)
+        except Exception as exc:
+            logger.warning("Failed to fire %s for sub %s: %s", event_type, sub.id, exc)
 
 
 subscription_service = SubscriptionService()

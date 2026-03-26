@@ -7,7 +7,8 @@ Grace logic:
     hard (7d default): past_due → expired
     recovery: past_due with paid invoice → active
 
-Phase 6B: fires subscription.expired event (not cancelled) on hard grace.
+Phase 6B: fires subscription.expired event on hard grace.
+Phase 6C: logs renewal events (grace_soft, grace_hard, grace_recovered).
 """
 
 import logging
@@ -24,6 +25,7 @@ from app.db.models import (
     SubscriptionPayment,
     SubscriptionStatus,
 )
+from app.services.subscription_renewal import log_renewal_event
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +64,7 @@ async def check_grace_periods(db: AsyncSession) -> dict[str, int]:
     """Check all subscriptions for grace period violations.
 
     Returns dict: {soft, hard, recovered}.
+    Phase 6C: logs renewal events for each transition.
     """
     now = datetime.now(timezone.utc)
     counts = {"soft": 0, "hard": 0, "recovered": 0}
@@ -84,8 +87,10 @@ async def check_grace_periods(db: AsyncSession) -> dict[str, int]:
         sub.status = SubscriptionStatus.past_due
         counts["soft"] += 1
         logger.info("Subscription %s → past_due (soft grace)", sub.id)
+        # Phase 6C: log event
+        await log_renewal_event(db, sub.id, "grace_soft")
 
-    # Hard grace: past_due → expired (Phase 6B: fires subscription.expired, NOT cancelled)
+    # Hard grace: past_due → expired (Phase 6B: fires subscription.expired)
     hard_stmt = (
         select(Subscription)
         .join(SubscriptionPayment, SubscriptionPayment.subscription_id == Subscription.id)
@@ -103,6 +108,8 @@ async def check_grace_periods(db: AsyncSession) -> dict[str, int]:
         sub.status = SubscriptionStatus.expired
         counts["hard"] += 1
         logger.info("Subscription %s → expired (hard grace)", sub.id)
+        # Phase 6C: log event
+        await log_renewal_event(db, sub.id, "grace_hard")
         # Phase 6B: fire subscription.expired event
         try:
             from app.services.webhook_service import webhook_service
@@ -130,6 +137,8 @@ async def check_grace_periods(db: AsyncSession) -> dict[str, int]:
         sub.status = SubscriptionStatus.active
         counts["recovered"] += 1
         logger.info("Subscription %s → active (recovery)", sub.id)
+        # Phase 6C: log event
+        await log_renewal_event(db, sub.id, "grace_recovered")
 
     if any(counts.values()):
         await db.flush()

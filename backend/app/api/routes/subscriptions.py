@@ -7,6 +7,7 @@ PATCH  /v1/subscriptions/{id}         — Update (pending changes) [Phase 6A]
 POST   /v1/subscriptions/{id}/pause   — Pause
 POST   /v1/subscriptions/{id}/resume  — Resume
 POST   /v1/subscriptions/{id}/cancel  — Cancel
+GET    /v1/subscriptions/{id}/renewal-log — Renewal event log [Phase 6C]
 """
 
 import logging
@@ -14,6 +15,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,7 +27,12 @@ from app.api.routes.subscription_schemas import (
     SubscriptionResponse,
     SubscriptionUpdateRequest,
 )
-from app.db.models import Merchant, Subscription, SubscriptionStatus
+from app.db.models import (
+    Merchant,
+    Subscription,
+    SubscriptionRenewalEvent,
+    SubscriptionStatus,
+)
 from app.db.session import get_db
 from app.services.invoice_service import WalletUnavailableError
 from app.services.subscription_exceptions import (
@@ -43,7 +50,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/subscriptions", tags=["subscriptions"])
 
 
-# ─── Helpers ─────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────
 
 
 def _build_pending_changes(sub):
@@ -97,7 +104,24 @@ def _parse_start_at(raw: str | None) -> datetime | None:
         raise HTTPException(status_code=400, detail=f"Invalid start_at: {raw!r}")
 
 
-# ─── Routes ──────────────────────────────────────────────────────────
+# ── Phase 6C: Renewal Log Schemas ────────────────────────────────────
+
+
+class RenewalEventResponse(BaseModel):
+    id: str
+    result: str
+    invoice_id: str | None = None
+    error_message: str | None = None
+    details: dict | None = None
+    created_at: str
+
+
+class RenewalLogCursorResponse(BaseModel):
+    data: list[RenewalEventResponse]
+    has_more: bool
+
+
+# ── Routes ────────────────────────────────────────────────────────────
 
 
 @router.post("", response_model=SubscriptionDetailResponse, status_code=201)
@@ -182,6 +206,51 @@ async def get_subscription(
     resp = _sub_to_response(detail["subscription"])
     return SubscriptionDetailResponse(
         **resp.model_dump(), customer=detail["customer"], payments=detail["payments"])
+
+
+@router.get("/{subscription_id}/renewal-log", response_model=RenewalLogCursorResponse)
+async def get_renewal_log(
+    subscription_id: uuid.UUID,
+    merchant: Merchant = Depends(get_current_merchant),
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(default=20, ge=1, le=100),
+    starting_after: uuid.UUID | None = Query(default=None),
+    ending_before: uuid.UUID | None = Query(default=None),
+):
+    """Phase 6C: Get renewal event log for a subscription (cursor paginated)."""
+    validate_cursor_params(starting_after, ending_before)
+
+    # Verify subscription belongs to merchant
+    sub_stmt = select(Subscription).where(
+        Subscription.id == subscription_id,
+        Subscription.merchant_id == merchant.id,
+    )
+    sub = (await db.execute(sub_stmt)).scalar_one_or_none()
+    if sub is None:
+        raise HTTPException(status_code=404, detail=f"Subscription {subscription_id} not found.")
+
+    base_query = select(SubscriptionRenewalEvent).where(
+        SubscriptionRenewalEvent.subscription_id == subscription_id,
+    )
+
+    result = await paginate_cursor(
+        db=db, base_query=base_query, model=SubscriptionRenewalEvent,
+        limit=limit, starting_after=starting_after, ending_before=ending_before,
+    )
+
+    data = [
+        RenewalEventResponse(
+            id=str(e.id),
+            result=e.result,
+            invoice_id=str(e.invoice_id) if e.invoice_id else None,
+            error_message=e.error_message,
+            details=e.details,
+            created_at=e.created_at.isoformat(),
+        )
+        for e in result["data"]
+    ]
+
+    return RenewalLogCursorResponse(data=data, has_more=result["has_more"])
 
 
 @router.patch("/{subscription_id}", response_model=SubscriptionResponse)

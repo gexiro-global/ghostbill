@@ -60,3 +60,4 @@ ghostbill-backups/
 # Tor keys (sensitive)
 tor-data/
 backend.bak_2026-03-26/
+backend.bak_*

@@ -1,12 +1,13 @@
 """Subscription exceptions and state machine constants.
 
 Used by subscription_service, subscription_renewal, routes, and renewer task.
+Phase 6C: SkipRenewalError now carries result_type for event logging.
 """
 
 from app.db.models import SubscriptionStatus
 
 
-# ─── State Machine ──────────────────────────────────────────────────────────
+# ── State Machine ────────────────────────────────────────────────────────────
 
 VALID_TRANSITIONS: dict[SubscriptionStatus, list[SubscriptionStatus]] = {
     SubscriptionStatus.active: [
@@ -33,7 +34,7 @@ TERMINAL_STATUSES: set[SubscriptionStatus] = {
 }
 
 
-# ─── Exceptions ────────────────────────────────────────────────────────────
+# ── Exceptions ──────────────────────────────────────────────────────────────
 
 
 class SubscriptionError(Exception):
@@ -57,5 +58,11 @@ class SubscriptionStateError(SubscriptionError):
 
 
 class SkipRenewalError(SubscriptionError):
-    """Renewal skipped — unpaid invoice exists or already renewed."""
-    pass
+    """Renewal skipped — unpaid invoice exists or already renewed.
+
+    Phase 6C: carries result_type for event logging.
+    """
+
+    def __init__(self, message: str = "", result_type: str = "skipped"):
+        super().__init__(message)
+        self.result_type = result_type

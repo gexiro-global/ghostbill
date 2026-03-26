@@ -1,15 +1,13 @@
 """Rate limiter middleware.
 
-Wraps core/rate_limit.py SlidingWindowRateLimiter into Starlette middleware.
-Determines tier from request context:
-- Internal IPs (127.0.0.1, Docker bridge): exempt
-- Public API paths (/v1/invoices/*/public, /pay/*): PUBLIC_API tier (300/min per IP)
-- Authenticated: tier from merchant record (default: starter)
-- Unauthenticated: 10/min per IP (or 30/min if Tor)
-- Health endpoint: exempt
+Wraps core/rate_limit.py into Starlette middleware.
+Phase 6C: hybrid IP-based + merchant-based rate limiting.
 
-On 429: returns JSON error with Retry-After header.
-On Redis failure: fail-open (request passes through).
+Flow:
+1. Skip exempt paths/IPs
+2. IP-based check (existing: sorted set, 6 tiers)
+3. If authenticated (Bearer gb_*) → merchant-based check (INCR+EXPIRE)
+4. Merchant headers override IP headers in response
 """
 
 import logging
@@ -20,6 +18,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from app.core.rate_limit import (
+    MerchantRateLimiter,
     RateTier,
     SlidingWindowRateLimiter,
     detect_tor_request,
@@ -40,6 +39,9 @@ PUBLIC_API_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Methods considered "write" for merchant rate limiting
+WRITE_METHODS = {"POST", "PATCH", "DELETE", "PUT"}
+
 
 class RateLimiterMiddleware(BaseHTTPMiddleware):
     """HTTP middleware for rate limiting API requests."""
@@ -48,11 +50,17 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self._redis = redis
         self._limiter: SlidingWindowRateLimiter | None = None
+        self._merchant_limiter: MerchantRateLimiter | None = None
 
     def _get_limiter(self, redis) -> SlidingWindowRateLimiter:
         if self._limiter is None:
             self._limiter = SlidingWindowRateLimiter(redis)
         return self._limiter
+
+    def _get_merchant_limiter(self, redis) -> MerchantRateLimiter:
+        if self._merchant_limiter is None:
+            self._merchant_limiter = MerchantRateLimiter(redis)
+        return self._merchant_limiter
 
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
@@ -71,23 +79,64 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
         if redis is None:
             return await call_next(request)
 
+        # ── Layer 1: IP-based rate limit ──────────────────────────
         limiter = self._get_limiter(redis)
         identifier, tier = self._resolve_rate_context(request)
-        result = await limiter.check(identifier, tier)
+        ip_result = await limiter.check(identifier, tier)
 
-        if not result.allowed:
+        if not ip_result.allowed:
             return JSONResponse(
                 status_code=429,
                 content={
                     "error": "rate_limit_exceeded",
-                    "message": f"Too many requests. Retry after {int(result.retry_after or 60)} seconds.",
-                    "retry_after": int(result.retry_after or 60),
+                    "message": f"Too many requests. Retry after {int(ip_result.retry_after or 60)} seconds.",
+                    "retry_after": int(ip_result.retry_after or 60),
                 },
-                headers=result.headers(),
+                headers=ip_result.headers(),
             )
 
+        # ── Layer 2: Merchant-based rate limit (Phase 6C) ──────────
+        response_headers = ip_result.headers()
+        merchant_id = getattr(request.state, "merchant_id", None) if hasattr(request, "state") else None
+
+        # If Bearer auth present, check merchant limit after route handler
+        # resolves merchant_id. We do pre-check here if we can extract from header.
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.startswith("Bearer gb_"):
+            # Run route handler first (merchant_id set by auth dependency)
+            response = await call_next(request)
+
+            # Check merchant limit post-auth
+            merchant_id = getattr(request.state, "merchant_id", None) if hasattr(request, "state") else None
+            if merchant_id:
+                merchant_limiter = self._get_merchant_limiter(redis)
+                m_tier = "write" if request.method in WRITE_METHODS else "read"
+                m_result = await merchant_limiter.check(str(merchant_id), m_tier)
+
+                # Override response headers with merchant limits
+                for h, v in m_result.headers().items():
+                    response.headers[h] = v
+
+                if not m_result.allowed:
+                    return JSONResponse(
+                        status_code=429,
+                        content={
+                            "error": "merchant_rate_limit_exceeded",
+                            "message": f"Merchant rate limit exceeded. Retry after {int(m_result.retry_after or 60)} seconds.",
+                            "retry_after": int(m_result.retry_after or 60),
+                        },
+                        headers=m_result.headers(),
+                    )
+
+            # Add IP headers too
+            for header, value in ip_result.headers().items():
+                if header not in response.headers:
+                    response.headers[header] = value
+            return response
+
+        # Non-authenticated: just IP limit
         response = await call_next(request)
-        for header, value in result.headers().items():
+        for header, value in response_headers.items():
             response.headers[header] = value
         return response
 

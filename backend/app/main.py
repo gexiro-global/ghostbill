@@ -4,6 +4,7 @@ Routers: merchants, price, invoices, payments, webhooks, api_keys, auth_signatur
          customers, subscriptions, public_invoice
 Middleware: RateLimiter → SecurityHeaders → TimingJitter
 Lifespan: Redis, background tasks (6), cleanup on shutdown.
+Phase 6C: /health includes detection metrics.
 """
 
 import asyncio
@@ -127,8 +128,16 @@ app.include_router(pay_page_router)
 
 @app.get("/health")
 async def health_check():
+    """Health check with Phase 6C detection metrics."""
+    from app.tasks.detection_helpers import get_health_metrics
+
+    detection = await get_health_metrics()
+
     return JSONResponse(content={
-        "status": "healthy", "app": settings.app_name, "version": settings.app_version,
+        "status": "healthy",
+        "app": settings.app_name,
+        "version": settings.app_version,
+        "detection": detection,
     })
 
 
@@ -150,7 +159,6 @@ async def trigger_renewal(request: Request, subscription_id: str | None = None):
 
         sub_uuid = uuid.UUID(subscription_id)
         async with get_session() as db:
-            # FOR UPDATE prevents race condition with background renewer
             stmt = (
                 select(Subscription)
                 .where(Subscription.id == sub_uuid, Subscription.status == SubscriptionStatus.active)

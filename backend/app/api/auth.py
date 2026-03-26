@@ -5,17 +5,7 @@ Supports two auth methods (auto-detected by token prefix):
     1. API key: gb_live_<hex> / gb_test_<hex> → bcrypt verify → Merchant
     2. Session token: gbs_<hex64> → Redis lookup → Merchant
 
-Flow (API key):
-    1. Extract Bearer token from Authorization header
-    2. Lookup api_keys by key_prefix (first 16 chars) for fast narrowing
-    3. bcrypt verify full key against key_hash
-    4. Return Merchant object + update last_used_at
-
-Flow (Session token):
-    1. Extract Bearer token from Authorization header
-    2. Lookup session in Redis (ghostbill_session:gbs_<token>)
-    3. Get merchant_id from Redis value
-    4. Return Merchant object
+Phase 6C: sets request.state.merchant_id for merchant rate limiting.
 """
 
 import logging
@@ -48,7 +38,6 @@ async def _auth_via_api_key(
 
     Lookup by prefix → bcrypt verify → load merchant → update last_used_at.
     """
-    # Lookup by prefix (fast narrowing, avoids bcrypt on every key)
     prefix = token[:KEY_PREFIX_LENGTH]
     result = await db.execute(
         select(ApiKey)
@@ -62,7 +51,6 @@ async def _auth_via_api_key(
             detail="Invalid API key.",
         )
 
-    # bcrypt verify (constant-time)
     matched_key: ApiKey | None = None
     for key in api_keys:
         if verify_api_key(token, key.key_hash):
@@ -75,7 +63,6 @@ async def _auth_via_api_key(
             detail="Invalid API key.",
         )
 
-    # Load merchant
     merchant_result = await db.execute(
         select(Merchant).where(
             Merchant.id == matched_key.merchant_id,
@@ -90,7 +77,6 @@ async def _auth_via_api_key(
             detail="Merchant account is inactive.",
         )
 
-    # Update last_used_at (fire-and-forget, non-blocking)
     await db.execute(
         update(ApiKey)
         .where(ApiKey.id == matched_key.id)
@@ -155,15 +141,8 @@ async def get_current_merchant(
         - gb_live_ / gb_test_ → API key auth (bcrypt)
         - gbs_ → Session token auth (Redis)
 
-    Usage:
-        @router.get("/me")
-        async def get_me(merchant: Merchant = Depends(get_current_merchant)):
-            ...
-
-    Raises:
-        HTTPException 401 if token missing, invalid, or merchant inactive.
+    Phase 6C: sets request.state.merchant_id for merchant rate limiting.
     """
-    # 1. Extract token
     authorization = request.headers.get("Authorization")
     token = parse_bearer_token(authorization)
 
@@ -173,8 +152,12 @@ async def get_current_merchant(
             detail="Missing or malformed Authorization header. Expected: Bearer <token>",
         )
 
-    # 2. Route by token prefix
     if token.startswith(SESSION_TOKEN_PREFIX):
-        return await _auth_via_session(token, db)
+        merchant = await _auth_via_session(token, db)
     else:
-        return await _auth_via_api_key(token, db)
+        merchant = await _auth_via_api_key(token, db)
+
+    # Phase 6C: expose merchant_id for middleware rate limiting
+    request.state.merchant_id = merchant.id
+
+    return merchant

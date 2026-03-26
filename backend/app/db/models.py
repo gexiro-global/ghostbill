@@ -15,6 +15,7 @@ from sqlalchemy import (
     String,
     Text,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -24,7 +25,7 @@ class Base(DeclarativeBase):
     pass
 
 
-# ── Enums ──────────────────────────────────────────────────────────────────────
+# ── Enums ──────────────────────────────────────────────────────────────────────────────
 
 
 class InvoiceStatus(str, enum.Enum):
@@ -58,7 +59,7 @@ class WebhookStatus(str, enum.Enum):
     dead_lettered = "dead_lettered"  # Phase 6B: DLQ
 
 
-# ── Models ─────────────────────────────────────────────────────────────────────
+# ── Models ─────────────────────────────────────────────────────────────────────────────
 
 
 class Merchant(Base):
@@ -272,6 +273,9 @@ class Subscription(Base):
     payments: Mapped[list["SubscriptionPayment"]] = relationship(
         back_populates="subscription"
     )
+    renewal_events: Mapped[list["SubscriptionRenewalEvent"]] = relationship(
+        back_populates="subscription"
+    )
 
 
 class SubscriptionPayment(Base):
@@ -298,6 +302,38 @@ class SubscriptionPayment(Base):
 
     subscription: Mapped["Subscription"] = relationship(back_populates="payments")
     invoice: Mapped["Invoice"] = relationship()
+
+
+# Phase 6C: Renewal event audit trail
+class SubscriptionRenewalEvent(Base):
+    """Audit log for every renewal attempt: success, skip, failure, grace."""
+    __tablename__ = "subscription_renewal_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    subscription_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("subscriptions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    result: Mapped[str] = mapped_column(String(30), nullable=False)
+    invoice_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("invoices.id"), nullable=True
+    )
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    details: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    subscription: Mapped["Subscription"] = relationship(
+        back_populates="renewal_events"
+    )
+
+    __table_args__ = (
+        Index("idx_renewal_events_sub", "subscription_id",
+              text("created_at DESC")),
+    )
 
 
 class WalletShard(Base):

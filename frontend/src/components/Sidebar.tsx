@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -12,8 +13,9 @@ import {
   Settings,
   Ghost,
   LogOut,
+  Shield,
 } from "lucide-react";
-import { getApiKey, isLiveKey, removeApiKey } from "@/lib/api";
+import { getApiKey, isLiveKey, removeApiKey, api } from "@/lib/api";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -29,6 +31,14 @@ export default function Sidebar() {
   const pathname = usePathname();
   const apiKey = getApiKey();
   const isLive = apiKey ? isLiveKey(apiKey) : false;
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    api
+      .get<{ is_admin: boolean }>("/admin/me")
+      .then((data) => setIsAdmin(data.is_admin))
+      .catch(() => setIsAdmin(false));
+  }, []);
 
   const handleLogout = () => {
     removeApiKey();
@@ -88,6 +98,21 @@ export default function Sidebar() {
             </Link>
           );
         })}
+
+        {/* Admin link — only visible to instance operator */}
+        {isAdmin && (
+          <Link
+            href="/dashboard/admin"
+            className={`flex items-center gap-3 px-3 py-2.5 rounded-gb text-sm font-medium transition-colors duration-200 mt-4 ${
+              pathname.startsWith("/dashboard/admin")
+                ? "bg-gb-accent/10 text-gb-accent border-l-2 border-gb-accent"
+                : "text-gb-warning hover:text-gb-warning hover:bg-gb-warning/10"
+            }`}
+          >
+            <Shield className="w-5 h-5 flex-shrink-0" />
+            Admin
+          </Link>
+        )}
       </nav>
 
       {/* Logout */}

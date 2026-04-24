@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     secret_key: str = ""
     api_prefix: str = "/v1"
 
+    # Admin (operator of this GhostBill instance)
+    admin_merchant_id: str = ""  # Phase 9: set in .env to enable admin panel
+
     # PostgreSQL
     postgres_user: str = "ghostbill"
     postgres_password: str = ""

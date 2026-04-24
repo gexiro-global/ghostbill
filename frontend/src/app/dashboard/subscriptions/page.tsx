@@ -10,10 +10,9 @@ import Pagination from "@/components/Pagination";
 import EmptyState from "@/components/EmptyState";
 import type {
   Subscription,
-  SubscriptionListResponse,
   Customer,
-  CustomerListResponse,
   Price,
+  CursorResponse,
 } from "@/lib/types";
 
 const STATUS_OPTIONS = [
@@ -30,8 +29,9 @@ const LIMIT = 20;
 export default function SubscriptionsPage() {
   const router = useRouter();
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
-  const [total, setTotal] = useState(0);
-  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [prevCursors, setPrevCursors] = useState<(string | null)[]>([]);
   const [statusFilter, setStatusFilter] = useState("");
   const [customerFilter, setCustomerFilter] = useState("");
   const [loading, setLoading] = useState(true);
@@ -44,8 +44,8 @@ export default function SubscriptionsPage() {
   // Fetch customers for filter dropdown + price for fiat preview
   useEffect(() => {
     api
-      .get<CustomerListResponse>("/customers?limit=100&offset=0")
-      .then((d) => setCustomers(d.customers))
+      .get<CursorResponse<Customer>>("/customers?limit=100")
+      .then((d) => setCustomers(d.data))
       .catch(() => {});
     api
       .get<Price>("/price")
@@ -59,15 +59,15 @@ export default function SubscriptionsPage() {
     try {
       const params = new URLSearchParams();
       params.set("limit", LIMIT.toString());
-      params.set("offset", offset.toString());
+      if (cursor) params.set("starting_after", cursor);
       if (statusFilter) params.set("status", statusFilter);
       if (customerFilter) params.set("customer_id", customerFilter);
 
-      const data = await api.get<SubscriptionListResponse>(
+      const data = await api.get<CursorResponse<Subscription>>(
         `/subscriptions?${params}`
       );
-      setSubscriptions(data.subscriptions);
-      setTotal(data.total);
+      setSubscriptions(data.data);
+      setHasMore(data.has_more);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Failed to load subscriptions"
@@ -75,7 +75,7 @@ export default function SubscriptionsPage() {
     } finally {
       setLoading(false);
     }
-  }, [offset, statusFilter, customerFilter]);
+  }, [cursor, statusFilter, customerFilter]);
 
   useEffect(() => {
     fetchSubscriptions();
@@ -83,12 +83,27 @@ export default function SubscriptionsPage() {
 
   const handleStatusChange = (value: string) => {
     setStatusFilter(value);
-    setOffset(0);
+    setCursor(null);
+    setPrevCursors([]);
   };
 
   const handleCustomerChange = (value: string) => {
     setCustomerFilter(value);
-    setOffset(0);
+    setCursor(null);
+    setPrevCursors([]);
+  };
+
+  const handleNext = () => {
+    if (subscriptions.length === 0 || !hasMore) return;
+    setPrevCursors([...prevCursors, cursor]);
+    setCursor(subscriptions[subscriptions.length - 1].id);
+  };
+
+  const handlePrev = () => {
+    if (prevCursors.length === 0) return;
+    const prev = prevCursors[prevCursors.length - 1];
+    setPrevCursors(prevCursors.slice(0, -1));
+    setCursor(prev);
   };
 
   function fiatEstimate(amountAtomic: string): string {
@@ -103,8 +118,8 @@ export default function SubscriptionsPage() {
   }
 
   function formatNextDue(sub: Subscription): string {
-    if (sub.status === "cancelled" || sub.status === "expired") return "—";
-    if (!sub.next_due_at) return "—";
+    if (sub.status === "cancelled" || sub.status === "expired") return "\u2014";
+    if (!sub.next_due_at) return "\u2014";
     const due = new Date(sub.next_due_at);
     const now = new Date();
     const diffMs = due.getTime() - now.getTime();
@@ -133,9 +148,6 @@ export default function SubscriptionsPage() {
           <h1 className="font-heading text-2xl font-bold text-gb-text-primary">
             Subscriptions
           </h1>
-          <p className="text-gb-text-secondary text-sm mt-1">
-            {total} subscription{total !== 1 ? "s" : ""} total
-          </p>
         </div>
         <Link
           href="/dashboard/subscriptions/new"
@@ -293,10 +305,11 @@ export default function SubscriptionsPage() {
               </table>
             </div>
             <Pagination
-              total={total}
-              limit={LIMIT}
-              offset={offset}
-              onPageChange={setOffset}
+              hasMore={hasMore}
+              hasPrev={prevCursors.length > 0}
+              onNext={handleNext}
+              onPrev={handlePrev}
+              loading={loading}
             />
           </>
         )}

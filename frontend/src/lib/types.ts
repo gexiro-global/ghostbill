@@ -18,6 +18,8 @@ export type SubscriptionStatus =
   | "cancelled"
   | "expired";
 
+export type WebhookStatus = "pending" | "delivered" | "failed" | "dead_lettered";
+
 export type WebhookEvent =
   | "payment.detected"
   | "payment.confirmed"
@@ -31,9 +33,20 @@ export type WebhookEvent =
   | "subscription.renewed"
   | "subscription.past_due"
   | "subscription.cancelled"
-  | "subscription.payment_confirmed";
+  | "subscription.payment_confirmed"
+  | "subscription.updated"
+  | "subscription.paused"
+  | "subscription.resumed"
+  | "subscription.expired";
 
 export type NetworkMode = "live" | "test";
+
+// === Cursor Pagination (Phase 6B) ===
+
+export interface CursorResponse<T> {
+  data: T[];
+  has_more: boolean;
+}
 
 // === Merchant ===
 
@@ -63,21 +76,20 @@ export interface Customer {
 export interface Invoice {
   id: string;
   merchant_id: string;
-  external_id: string | null;
   description: string | null;
   amount_atomic: string;
   amount_xmr: string;
   fiat_amount: string | null;
   fiat_currency: string | null;
+  fiat_rate: string | null;
   status: InvoiceStatus;
-  subaddress: string;
-  subaddress_index: number;
-  paid_atomic: string;
-  confirmations_required: number;
+  address: string | null;
+  address_index: number | null;
   expires_at: string;
+  paid_at: string | null;
   created_at: string;
   updated_at: string;
-  payments: Payment[];
+  metadata: Record<string, unknown> | null;
 }
 
 // === Payment ===
@@ -97,6 +109,14 @@ export interface Payment {
 
 // === Subscription ===
 
+export interface PendingChanges {
+  amount_xmr: string | null;
+  amount_atomic: number | null;
+  interval_days: number | null;
+  grace_days_soft: number | null;
+  grace_days_hard: number | null;
+}
+
 export interface Subscription {
   id: string;
   merchant_id: string;
@@ -107,10 +127,14 @@ export interface Subscription {
   interval_days: number;
   grace_days_soft: number;
   grace_days_hard: number;
+  billing_anchor_at: string | null;
   next_due_at: string | null;
   cancelled_at: string | null;
   created_at: string;
-  metadata: Record<string, unknown>;
+  updated_at: string;
+  metadata: Record<string, unknown> | null;
+  pending_changes: PendingChanges | null;
+  has_pending_changes: boolean;
   customer?: CustomerSummary;
   payments?: SubscriptionPaymentInfo[];
 }
@@ -130,24 +154,53 @@ export interface SubscriptionPaymentInfo {
   paid_at: string | null;
 }
 
+// === Renewal Event (Phase 6C) ===
+
+export interface RenewalEvent {
+  id: string;
+  subscription_id: string;
+  result: string;
+  invoice_id: string | null;
+  error_message: string | null;
+  details: Record<string, unknown> | null;
+  created_at: string;
+}
+
 // === Webhook ===
 
 export interface WebhookDelivery {
   id: string;
   invoice_id: string;
-  event: WebhookEvent;
+  event_type: string;
   url: string;
   payload: Record<string, unknown>;
-  response_status: number | null;
-  response_body: string | null;
-  attempt: number;
+  status: WebhookStatus;
+  attempts: number;
   max_attempts: number;
+  response_code: number | null;
+  response_body: string | null;
   next_retry_at: string | null;
-  delivered_at: string | null;
   created_at: string;
 }
 
-// === API Key (matches backend ApiKeyResponse) ===
+// === Webhook Dead Letter (Phase 6B) ===
+
+export interface WebhookDeadLetter {
+  id: string;
+  delivery_id: string;
+  merchant_id: string;
+  event_type: string;
+  payload: Record<string, unknown>;
+  original_created_at: string;
+  dead_lettered_at: string;
+  retry_count: number;
+  last_retry_at: string | null;
+  last_error: string | null;
+  resolved: boolean;
+  resolved_at: string | null;
+}
+
+// === API Key ===
 
 export interface ApiKey {
   id: string;
@@ -167,7 +220,7 @@ export interface ApiKeyCreated {
   environment: NetworkMode;
 }
 
-// === Price (matches GET /v1/price response) ===
+// === Price ===
 
 export interface Price {
   usd: number;
@@ -175,46 +228,4 @@ export interface Price {
   timestamp: string;
   source: string;
   stale: boolean;
-}
-
-// === Pagination (matches API responses) ===
-
-export interface InvoiceListResponse {
-  invoices: Invoice[];
-  total: number;
-  limit: number;
-  offset: number;
-}
-
-export interface PaymentListResponse {
-  payments: Payment[];
-  total: number;
-  limit: number;
-  offset: number;
-}
-
-export interface CustomerListResponse {
-  customers: Customer[];
-  total: number;
-  limit: number;
-  offset: number;
-}
-
-export interface SubscriptionListResponse {
-  subscriptions: Subscription[];
-  total: number;
-  limit: number;
-  offset: number;
-}
-
-export interface ApiKeyListResponse {
-  api_keys: ApiKey[];
-  total: number;
-}
-
-export interface WebhookDeliveryListResponse {
-  deliveries: WebhookDelivery[];
-  total: number;
-  limit: number;
-  offset: number;
 }

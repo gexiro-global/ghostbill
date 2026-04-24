@@ -8,7 +8,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import Pagination from "@/components/Pagination";
 import EmptyState from "@/components/EmptyState";
 import CopyButton from "@/components/CopyButton";
-import type { Payment, PaymentListResponse } from "@/lib/types";
+import type { Payment, CursorResponse } from "@/lib/types";
 
 const STATUS_OPTIONS = [
   { value: "", label: "All Statuses" },
@@ -21,8 +21,9 @@ const LIMIT = 20;
 
 export default function PaymentsPage() {
   const [payments, setPayments] = useState<Payment[]>([]);
-  const [total, setTotal] = useState(0);
-  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [prevCursors, setPrevCursors] = useState<(string | null)[]>([]);
   const [statusFilter, setStatusFilter] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -33,18 +34,18 @@ export default function PaymentsPage() {
     try {
       const params = new URLSearchParams();
       params.set("limit", LIMIT.toString());
-      params.set("offset", offset.toString());
+      if (cursor) params.set("starting_after", cursor);
       if (statusFilter) params.set("status", statusFilter);
 
-      const data = await api.get<PaymentListResponse>(`/payments?${params}`);
-      setPayments(data.payments);
-      setTotal(data.total);
+      const data = await api.get<CursorResponse<Payment>>(`/payments?${params}`);
+      setPayments(data.data);
+      setHasMore(data.has_more);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load payments");
     } finally {
       setLoading(false);
     }
-  }, [offset, statusFilter]);
+  }, [cursor, statusFilter]);
 
   useEffect(() => {
     fetchPayments();
@@ -52,7 +53,21 @@ export default function PaymentsPage() {
 
   const handleStatusChange = (value: string) => {
     setStatusFilter(value);
-    setOffset(0);
+    setCursor(null);
+    setPrevCursors([]);
+  };
+
+  const handleNext = () => {
+    if (payments.length === 0 || !hasMore) return;
+    setPrevCursors([...prevCursors, cursor]);
+    setCursor(payments[payments.length - 1].id);
+  };
+
+  const handlePrev = () => {
+    if (prevCursors.length === 0) return;
+    const prev = prevCursors[prevCursors.length - 1];
+    setPrevCursors(prevCursors.slice(0, -1));
+    setCursor(prev);
   };
 
   return (
@@ -62,9 +77,6 @@ export default function PaymentsPage() {
         <h1 className="font-heading text-2xl font-bold text-gb-text-primary">
           Payments
         </h1>
-        <p className="text-gb-text-secondary text-sm mt-1">
-          {total} payment{total !== 1 ? "s" : ""} total
-        </p>
       </div>
 
       {/* Filters */}
@@ -182,10 +194,11 @@ export default function PaymentsPage() {
               </table>
             </div>
             <Pagination
-              total={total}
-              limit={LIMIT}
-              offset={offset}
-              onPageChange={setOffset}
+              hasMore={hasMore}
+              hasPrev={prevCursors.length > 0}
+              onNext={handleNext}
+              onPrev={handlePrev}
+              loading={loading}
             />
           </>
         )}

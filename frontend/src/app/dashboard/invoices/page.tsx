@@ -1,13 +1,13 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
-import { Plus, FileText, Search } from "lucide-react";
+import { Plus, FileText } from "lucide-react";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { formatXMR, formatFiat, timeAgo } from "@/lib/format";
 import { StatusBadge } from "@/components/StatusBadge";
 import Pagination from "@/components/Pagination";
 import EmptyState from "@/components/EmptyState";
-import type { Invoice, InvoiceListResponse, InvoiceStatus } from "@/lib/types";
+import type { Invoice, CursorResponse } from "@/lib/types";
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "All Statuses" },
@@ -24,8 +24,9 @@ const LIMIT = 20;
 
 export default function InvoicesPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [total, setTotal] = useState(0);
-  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [prevCursors, setPrevCursors] = useState<(string | null)[]>([]);
   const [statusFilter, setStatusFilter] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -36,18 +37,18 @@ export default function InvoicesPage() {
     try {
       const params = new URLSearchParams();
       params.set("limit", LIMIT.toString());
-      params.set("offset", offset.toString());
+      if (cursor) params.set("starting_after", cursor);
       if (statusFilter) params.set("status", statusFilter);
 
-      const data = await api.get<InvoiceListResponse>(`/invoices?${params}`);
-      setInvoices(data.invoices);
-      setTotal(data.total);
+      const data = await api.get<CursorResponse<Invoice>>(`/invoices?${params}`);
+      setInvoices(data.data);
+      setHasMore(data.has_more);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load invoices");
     } finally {
       setLoading(false);
     }
-  }, [offset, statusFilter]);
+  }, [cursor, statusFilter]);
 
   useEffect(() => {
     fetchInvoices();
@@ -55,7 +56,21 @@ export default function InvoicesPage() {
 
   const handleStatusChange = (value: string) => {
     setStatusFilter(value);
-    setOffset(0);
+    setCursor(null);
+    setPrevCursors([]);
+  };
+
+  const handleNext = () => {
+    if (invoices.length === 0 || !hasMore) return;
+    setPrevCursors([...prevCursors, cursor]);
+    setCursor(invoices[invoices.length - 1].id);
+  };
+
+  const handlePrev = () => {
+    if (prevCursors.length === 0) return;
+    const prev = prevCursors[prevCursors.length - 1];
+    setPrevCursors(prevCursors.slice(0, -1));
+    setCursor(prev);
   };
 
   return (
@@ -66,9 +81,6 @@ export default function InvoicesPage() {
           <h1 className="font-heading text-2xl font-bold text-gb-text-primary">
             Invoices
           </h1>
-          <p className="text-gb-text-secondary text-sm mt-1">
-            {total} invoice{total !== 1 ? "s" : ""} total
-          </p>
         </div>
         <Link
           href="/dashboard/invoices/new"
@@ -150,9 +162,6 @@ export default function InvoicesPage() {
                     <th className="text-left text-xs text-gb-text-secondary font-medium pb-3 pr-4 hidden lg:table-cell">
                       Description
                     </th>
-                    <th className="text-left text-xs text-gb-text-secondary font-medium pb-3 pr-4 hidden sm:table-cell">
-                      External ID
-                    </th>
                     <th className="text-right text-xs text-gb-text-secondary font-medium pb-3">
                       Created
                     </th>
@@ -179,12 +188,7 @@ export default function InvoicesPage() {
                       </td>
                       <td className="py-3 pr-4 hidden lg:table-cell">
                         <span className="text-sm text-gb-text-secondary truncate max-w-[200px] block">
-                          {inv.description || "—"}
-                        </span>
-                      </td>
-                      <td className="py-3 pr-4 hidden sm:table-cell">
-                        <span className="text-sm text-gb-text-secondary font-mono">
-                          {inv.external_id || "—"}
+                          {inv.description || "\u2014"}
                         </span>
                       </td>
                       <td className="py-3 text-right">
@@ -201,10 +205,11 @@ export default function InvoicesPage() {
               </table>
             </div>
             <Pagination
-              total={total}
-              limit={LIMIT}
-              offset={offset}
-              onPageChange={setOffset}
+              hasMore={hasMore}
+              hasPrev={prevCursors.length > 0}
+              onNext={handleNext}
+              onPrev={handlePrev}
+              loading={loading}
             />
           </>
         )}

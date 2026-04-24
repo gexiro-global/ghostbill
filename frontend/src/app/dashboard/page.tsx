@@ -5,7 +5,7 @@ import Link from "next/link";
 import { api } from "@/lib/api";
 import { formatXMR, formatDate, timeAgo } from "@/lib/format";
 import { StatusBadge } from "@/components/StatusBadge";
-import type { Merchant, Invoice, Payment, Price, InvoiceListResponse, PaymentListResponse } from "@/lib/types";
+import type { Merchant, Invoice, Payment, Price, CursorResponse } from "@/lib/types";
 
 interface MetricCardProps {
   title: string;
@@ -44,7 +44,6 @@ function MetricCard({ title, value, subtitle, icon, loading, warning }: MetricCa
 
 export default function DashboardPage() {
   const [merchant, setMerchant] = useState<Merchant | null>(null);
-  const [totalInvoices, setTotalInvoices] = useState<number>(0);
   const [pendingCount, setPendingCount] = useState<number>(0);
   const [price, setPrice] = useState<Price | null>(null);
   const [recentInvoices, setRecentInvoices] = useState<Invoice[]>([]);
@@ -54,23 +53,26 @@ export default function DashboardPage() {
   useEffect(() => {
     async function fetchDashboard() {
       try {
-        const [merchantData, allInvoices, pendingInvoices, priceData, payments] =
+        const [merchantData, invoiceData, pendingData, priceData, paymentData] =
           await Promise.allSettled([
             api.get<Merchant>("/merchants/me"),
-            api.get<InvoiceListResponse>("/invoices?limit=5"),
-            api.get<InvoiceListResponse>("/invoices?status=pending&limit=1"),
+            api.get<CursorResponse<Invoice>>("/invoices?limit=5"),
+            api.get<CursorResponse<Invoice>>("/invoices?status=pending&limit=100"),
             api.get<Price>("/price"),
-            api.get<PaymentListResponse>("/payments?status=confirmed&limit=50"),
+            api.get<CursorResponse<Payment>>("/payments?status=confirmed&limit=100"),
           ]);
 
         if (merchantData.status === "fulfilled") setMerchant(merchantData.value);
-        if (allInvoices.status === "fulfilled") {
-          setTotalInvoices(allInvoices.value.total);
-          setRecentInvoices(allInvoices.value.invoices);
+        if (invoiceData.status === "fulfilled") {
+          setRecentInvoices(invoiceData.value.data);
         }
-        if (pendingInvoices.status === "fulfilled") setPendingCount(pendingInvoices.value.total);
+        if (pendingData.status === "fulfilled") {
+          setPendingCount(pendingData.value.data.length);
+        }
         if (priceData.status === "fulfilled") setPrice(priceData.value);
-        if (payments.status === "fulfilled") setConfirmedPayments(payments.value.payments);
+        if (paymentData.status === "fulfilled") {
+          setConfirmedPayments(paymentData.value.data);
+        }
       } catch {
         // Individual errors handled by allSettled
       } finally {
@@ -93,11 +95,11 @@ export default function DashboardPage() {
   const totalReceivedXmr = formatXMR(totalReceivedAtomic.toString(), 4);
 
   // Format price display
-  const priceDisplay = price ? `$${price.usd.toFixed(2)}` : "—";
+  const priceDisplay = price ? `$${price.usd.toFixed(2)}` : "\u2014";
   const priceSubtitle = price
     ? price.stale
       ? "Price data may be outdated"
-      : `€${price.eur.toFixed(2)} · ${price.source}`
+      : `\u20ac${price.eur.toFixed(2)} \u00b7 ${price.source}`
     : "Loading...";
 
   return (
@@ -126,8 +128,8 @@ export default function DashboardPage() {
       {/* Metric cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <MetricCard
-          title="Total Invoices"
-          value={totalInvoices.toString()}
+          title="Confirmed Payments"
+          value={confirmedPayments.length.toString()}
           subtitle="All time"
           icon={<FileText className="w-5 h-5" />}
           loading={loading}
@@ -162,12 +164,12 @@ export default function DashboardPage() {
           <h2 className="font-heading text-lg font-semibold text-gb-text-primary">
             Recent Invoices
           </h2>
-          {totalInvoices > 0 && (
+          {recentInvoices.length > 0 && (
             <Link
               href="/dashboard/invoices"
               className="text-sm text-gb-accent hover:underline"
             >
-              View all →
+              View all \u2192
             </Link>
           )}
         </div>
@@ -222,7 +224,7 @@ export default function DashboardPage() {
                     </td>
                     <td className="py-3 pr-4 hidden sm:table-cell">
                       <span className="text-sm text-gb-text-secondary truncate max-w-[200px] block">
-                        {inv.description || "—"}
+                        {inv.description || "\u2014"}
                       </span>
                     </td>
                     <td className="py-3 text-right">

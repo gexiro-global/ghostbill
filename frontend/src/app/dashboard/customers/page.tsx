@@ -5,7 +5,7 @@ import { api } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import Pagination from "@/components/Pagination";
 import EmptyState from "@/components/EmptyState";
-import type { Customer, CustomerListResponse } from "@/lib/types";
+import type { Customer, CursorResponse } from "@/lib/types";
 
 const LIMIT = 20;
 
@@ -19,8 +19,9 @@ const emptyForm: CustomerFormData = { external_id: "", email: "", metadata: "" }
 
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [total, setTotal] = useState(0);
-  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [prevCursors, setPrevCursors] = useState<(string | null)[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -38,20 +39,33 @@ export default function CustomersPage() {
     try {
       const params = new URLSearchParams();
       params.set("limit", LIMIT.toString());
-      params.set("offset", offset.toString());
-      const data = await api.get<CustomerListResponse>(`/customers?${params}`);
-      setCustomers(data.customers);
-      setTotal(data.total);
+      if (cursor) params.set("starting_after", cursor);
+      const data = await api.get<CursorResponse<Customer>>(`/customers?${params}`);
+      setCustomers(data.data);
+      setHasMore(data.has_more);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load customers");
     } finally {
       setLoading(false);
     }
-  }, [offset]);
+  }, [cursor]);
 
   useEffect(() => {
     fetchCustomers();
   }, [fetchCustomers]);
+
+  const handleNext = () => {
+    if (customers.length === 0 || !hasMore) return;
+    setPrevCursors([...prevCursors, cursor]);
+    setCursor(customers[customers.length - 1].id);
+  };
+
+  const handlePrev = () => {
+    if (prevCursors.length === 0) return;
+    const prev = prevCursors[prevCursors.length - 1];
+    setPrevCursors(prevCursors.slice(0, -1));
+    setCursor(prev);
+  };
 
   // Client-side filter
   const filtered = search
@@ -126,9 +140,6 @@ export default function CustomersPage() {
           <h1 className="font-heading text-2xl font-bold text-gb-text-primary">
             Customers
           </h1>
-          <p className="text-gb-text-secondary text-sm mt-1">
-            {total} customer{total !== 1 ? "s" : ""} total
-          </p>
         </div>
         <button onClick={openCreate} className="gb-btn-primary flex items-center gap-2">
           <Plus className="w-4 h-4" />
@@ -211,12 +222,12 @@ export default function CustomersPage() {
                     >
                       <td className="py-3 pr-4">
                         <span className="font-mono text-sm text-gb-text-primary">
-                          {cust.external_id || "—"}
+                          {cust.external_id || "\u2014"}
                         </span>
                       </td>
                       <td className="py-3 pr-4">
                         <span className="text-sm text-gb-text-primary">
-                          {cust.email || "—"}
+                          {cust.email || "\u2014"}
                         </span>
                       </td>
                       <td className="py-3 pr-4 hidden md:table-cell">
@@ -244,10 +255,11 @@ export default function CustomersPage() {
               </table>
             </div>
             <Pagination
-              total={total}
-              limit={LIMIT}
-              offset={offset}
-              onPageChange={setOffset}
+              hasMore={hasMore}
+              hasPrev={prevCursors.length > 0}
+              onNext={handleNext}
+              onPrev={handlePrev}
+              loading={loading}
             />
           </>
         )}

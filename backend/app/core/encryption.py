@@ -12,11 +12,11 @@ CRITICAL:
 """
 
 import base64
-import os
 import logging
+import os
 
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 logger = logging.getLogger(__name__)
 
@@ -25,11 +25,13 @@ NONCE_SIZE = 12  # 96-bit nonce for AES-GCM
 
 class EncryptionError(Exception):
     """Raised when encryption fails."""
+
     pass
 
 
 class DecryptionError(Exception):
     """Raised when decryption fails (wrong key, corrupted data, tampered)."""
+
     pass
 
 
@@ -43,23 +45,15 @@ class ViewKeyEncryption:
 
     def __init__(self, master_key_hex: str):
         if not master_key_hex:
-            raise EncryptionError(
-                "MASTER_ENCRYPTION_KEY is not set. "
-                "Generate with: openssl rand -hex 32"
-            )
+            raise EncryptionError("MASTER_ENCRYPTION_KEY is not set. Generate with: openssl rand -hex 32")
 
         try:
             key_bytes = bytes.fromhex(master_key_hex)
         except ValueError as e:
-            raise EncryptionError(
-                f"MASTER_ENCRYPTION_KEY is not valid hex: {e}"
-            )
+            raise EncryptionError(f"MASTER_ENCRYPTION_KEY is not valid hex: {e}")
 
         if len(key_bytes) != 32:
-            raise EncryptionError(
-                f"MASTER_ENCRYPTION_KEY must be 32 bytes (64 hex chars), "
-                f"got {len(key_bytes)} bytes"
-            )
+            raise EncryptionError(f"MASTER_ENCRYPTION_KEY must be 32 bytes (64 hex chars), got {len(key_bytes)} bytes")
 
         self._aesgcm = AESGCM(key_bytes)
         logger.info("ViewKeyEncryption initialized successfully")
@@ -84,9 +78,7 @@ class ViewKeyEncryption:
 
         try:
             nonce = os.urandom(NONCE_SIZE)
-            ciphertext_with_tag = self._aesgcm.encrypt(
-                nonce, plaintext.encode("utf-8"), None
-            )
+            ciphertext_with_tag = self._aesgcm.encrypt(nonce, plaintext.encode("utf-8"), None)
             # nonce (12) + ciphertext + tag (16) = combined blob
             combined = nonce + ciphertext_with_tag
             return base64.b64encode(combined).decode("ascii")
@@ -116,24 +108,16 @@ class ViewKeyEncryption:
             raise DecryptionError(f"Invalid base64 input: {e}") from e
 
         if len(combined) < NONCE_SIZE + 16:
-            raise DecryptionError(
-                f"Encrypted data too short: {len(combined)} bytes "
-                f"(minimum {NONCE_SIZE + 16})"
-            )
+            raise DecryptionError(f"Encrypted data too short: {len(combined)} bytes (minimum {NONCE_SIZE + 16})")
 
         nonce = combined[:NONCE_SIZE]
         ciphertext_with_tag = combined[NONCE_SIZE:]
 
         try:
-            plaintext_bytes = self._aesgcm.decrypt(
-                nonce, ciphertext_with_tag, None
-            )
+            plaintext_bytes = self._aesgcm.decrypt(nonce, ciphertext_with_tag, None)
             return plaintext_bytes.decode("utf-8")
         except InvalidTag:
-            raise DecryptionError(
-                "Decryption failed: invalid tag. "
-                "Wrong master key or data has been tampered with."
-            )
+            raise DecryptionError("Decryption failed: invalid tag. Wrong master key or data has been tampered with.")
         except Exception as e:
             raise DecryptionError(f"Decryption failed: {e}") from e
 
@@ -165,6 +149,7 @@ def get_encryption() -> ViewKeyEncryption:
     global _encryption_instance
     if _encryption_instance is None:
         from app.config import settings
+
         _encryption_instance = ViewKeyEncryption(settings.master_encryption_key)
     return _encryption_instance
 

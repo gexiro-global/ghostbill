@@ -40,7 +40,6 @@ async def create_invoice_safe(
 
 @pytest.mark.asyncio
 class TestConcurrentInvoices:
-
     async def test_concurrent_invoice_creation(self, client: httpx.AsyncClient, test_merchant: dict):
         """Create 20 invoices concurrently and verify uniqueness."""
         api_key = test_merchant["api_key_live"]
@@ -87,7 +86,8 @@ class TestConcurrentInvoices:
         # Retry with backoff if rate limited
         for attempt in range(3):
             resp = await client.get(
-                "/v1/invoices", params={"limit": 50, "status": "pending"},
+                "/v1/invoices",
+                params={"limit": 50, "status": "pending"},
                 headers=auth_headers(api_key),
             )
             if resp.status_code == 200:

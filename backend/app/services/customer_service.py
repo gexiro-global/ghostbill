@@ -28,27 +28,33 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 # ── Exceptions ──────────────────────────────────────────────────────────────
 
+
 class CustomerError(Exception):
     """Base customer service error."""
+
     pass
 
 
 class CustomerNotFoundError(CustomerError):
     """Customer does not exist or does not belong to merchant."""
+
     pass
 
 
 class CustomerValidationError(CustomerError):
     """Input validation failed."""
+
     pass
 
 
 class CustomerConflictError(CustomerError):
     """Duplicate external_id for this merchant."""
+
     pass
 
 
 # ── Service ─────────────────────────────────────────────────────────────────
+
 
 class CustomerService:
     """CRUD for customers. Merchant isolation enforced on every operation."""
@@ -83,9 +89,7 @@ class CustomerService:
             )
             existing = (await db.execute(stmt)).scalar_one_or_none()
             if existing is not None:
-                raise CustomerConflictError(
-                    f"Customer with external_id '{external_id}' already exists."
-                )
+                raise CustomerConflictError(f"Customer with external_id '{external_id}' already exists.")
 
         customer = Customer(
             id=uuid.uuid4(),
@@ -99,7 +103,9 @@ class CustomerService:
 
         logger.info(
             "Customer created: %s, merchant=%s, external_id=%s",
-            customer.id, merchant_id, external_id,
+            customer.id,
+            merchant_id,
+            external_id,
         )
         return customer
 
@@ -141,13 +147,7 @@ class CustomerService:
         count_stmt = select(func.count(Customer.id)).where(*base_where)
         total = (await db.execute(count_stmt)).scalar_one()
 
-        data_stmt = (
-            select(Customer)
-            .where(*base_where)
-            .order_by(Customer.created_at.desc())
-            .limit(limit)
-            .offset(offset)
-        )
+        data_stmt = select(Customer).where(*base_where).order_by(Customer.created_at.desc()).limit(limit).offset(offset)
         result = await db.execute(data_stmt)
         customers = list(result.scalars().all())
 
@@ -185,9 +185,7 @@ class CustomerService:
                 )
                 existing = (await db.execute(stmt)).scalar_one_or_none()
                 if existing is not None:
-                    raise CustomerConflictError(
-                        f"Customer with external_id '{external_id}' already exists."
-                    )
+                    raise CustomerConflictError(f"Customer with external_id '{external_id}' already exists.")
             customer.external_id = external_id
 
         if metadata is not _UNSET:

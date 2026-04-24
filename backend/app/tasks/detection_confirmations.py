@@ -54,8 +54,10 @@ async def update_unconfirmed(db: AsyncSession) -> int:
                         )
                         if events:
                             await webhook_service.dispatch_events(
-                                db=db, events=events,
-                                merchant=merchant, invoice=invoice,
+                                db=db,
+                                events=events,
+                                merchant=merchant,
+                                invoice=invoice,
                                 payment=payment,
                             )
                 continue
@@ -68,10 +70,7 @@ async def update_unconfirmed(db: AsyncSession) -> int:
             if block_height and payment.block_height is None:
                 payment.block_height = block_height
 
-            if (
-                payment.status == PaymentStatus.detected
-                and confirmations >= CONFIRMATION_THRESHOLD
-            ):
+            if payment.status == PaymentStatus.detected and confirmations >= CONFIRMATION_THRESHOLD:
                 payment.status = PaymentStatus.confirmed
                 payment.confirmed_at = datetime.now(timezone.utc)
                 confirmed_count += 1
@@ -93,20 +92,18 @@ async def update_unconfirmed(db: AsyncSession) -> int:
                         merchant = await load_merchant(db, invoice.merchant_id)
                         if merchant:
                             await webhook_service.dispatch_events(
-                                db=db, events=events,
-                                merchant=merchant, invoice=invoice,
+                                db=db,
+                                events=events,
+                                merchant=merchant,
+                                invoice=invoice,
                                 payment=payment,
                             )
 
             await db.flush()
 
         except MoneroRPCError as exc:
-            logger.warning(
-                "RPC error checking tx %s: %s", payment.tx_hash[:16], exc
-            )
+            logger.warning("RPC error checking tx %s: %s", payment.tx_hash[:16], exc)
         except Exception:
-            logger.exception(
-                "Error updating confirmations for tx %s", payment.tx_hash[:16]
-            )
+            logger.exception("Error updating confirmations for tx %s", payment.tx_hash[:16])
 
     return confirmed_count

@@ -20,7 +20,6 @@ CRITICAL:
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,7 +35,6 @@ from app.db.models import (
 )
 from app.services.invoice_service import (
     TERMINAL_STATUSES,
-    InvoiceService,
     invoice_service,
 )
 from app.services.monero_rpc import DUST_THRESHOLD_ATOMIC, atomic_to_xmr
@@ -50,17 +48,21 @@ CONFIRMATION_THRESHOLD: int = 10  # blocks required for "confirmed" status
 
 # ─── Exceptions ──────────────────────────────────────────────────────────────
 
+
 class PaymentError(Exception):
     """Base payment service error."""
+
     pass
 
 
 class PaymentNotFoundError(PaymentError):
     """Payment not found."""
+
     pass
 
 
 # ─── Service ─────────────────────────────────────────────────────────────────
+
 
 class PaymentService:
     """Payment business logic — stateless, operates on provided DB session."""
@@ -78,12 +80,9 @@ class PaymentService:
         Used by detection engine to match incoming TX to invoices.
         Returns Invoice with address and payments loaded, or None.
         """
-        stmt = (
-            select(InvoiceAddress)
-            .where(
-                InvoiceAddress.account_index == account_index,
-                InvoiceAddress.address_index == address_index,
-            )
+        stmt = select(InvoiceAddress).where(
+            InvoiceAddress.account_index == account_index,
+            InvoiceAddress.address_index == address_index,
         )
         result = await db.execute(stmt)
         invoice_addr = result.scalar_one_or_none()
@@ -155,11 +154,7 @@ class PaymentService:
             base_where.append(Payment.status == status)
 
         # Count
-        count_stmt = (
-            select(func.count(Payment.id))
-            .join(Invoice, Payment.invoice_id == Invoice.id)
-            .where(*base_where)
-        )
+        count_stmt = select(func.count(Payment.id)).join(Invoice, Payment.invoice_id == Invoice.id).where(*base_where)
         total = (await db.execute(count_stmt)).scalar_one()
 
         # Data
@@ -222,9 +217,7 @@ class PaymentService:
             return None
 
         # 2. Find invoice by subaddress index
-        invoice = await self.find_invoice_by_subaddress_index(
-            db, account_index, address_index
-        )
+        invoice = await self.find_invoice_by_subaddress_index(db, account_index, address_index)
         if invoice is None:
             # Unknown subaddress — not our invoice (index 0 = primary address, etc.)
             return None
@@ -356,10 +349,7 @@ class PaymentService:
             changed = True
 
         # Check threshold transition: detected → confirmed
-        if (
-            payment.status == PaymentStatus.detected
-            and confirmations >= CONFIRMATION_THRESHOLD
-        ):
+        if payment.status == PaymentStatus.detected and confirmations >= CONFIRMATION_THRESHOLD:
             payment.status = PaymentStatus.confirmed
             payment.confirmed_at = datetime.now(timezone.utc)
             changed = True
@@ -445,7 +435,9 @@ class PaymentService:
                 # Overpaid: transition through paid first if needed
                 if invoice.status == InvoiceStatus.pending:
                     await invoice_service.update_status(
-                        db, invoice, InvoiceStatus.partially_paid,
+                        db,
+                        invoice,
+                        InvoiceStatus.partially_paid,
                         details={"cumulative_atomic": cumulative, "required_atomic": required},
                     )
                 new_status = InvoiceStatus.overpaid
@@ -457,7 +449,9 @@ class PaymentService:
         # Apply transition
         if new_status is not None and invoice_service.can_transition(invoice.status, new_status):
             await invoice_service.update_status(
-                db, invoice, new_status,
+                db,
+                invoice,
+                new_status,
                 details={
                     "cumulative_atomic": cumulative,
                     "required_atomic": required,
@@ -466,18 +460,24 @@ class PaymentService:
 
         # === Phase 5A: Subscription payment hook ===
         # If invoice transitioned to a paid state, notify subscription service
-        if invoice.status in (
-            InvoiceStatus.paid,
-            InvoiceStatus.overpaid,
-            InvoiceStatus.late_paid,
-        ) and old_status != invoice.status:
+        if (
+            invoice.status
+            in (
+                InvoiceStatus.paid,
+                InvoiceStatus.overpaid,
+                InvoiceStatus.late_paid,
+            )
+            and old_status != invoice.status
+        ):
             try:
                 from app.services.subscription_grace import handle_subscription_payment
+
                 await handle_subscription_payment(db, invoice.id)
             except Exception as exc:
                 logger.warning(
                     "Subscription payment hook failed for invoice %s: %s",
-                    invoice.id, exc,
+                    invoice.id,
+                    exc,
                 )
         # === END Phase 5A ===
 
@@ -494,12 +494,9 @@ class PaymentService:
 
         Only detected + confirmed payments count toward the total.
         """
-        stmt = (
-            select(func.coalesce(func.sum(Payment.amount_atomic), 0))
-            .where(
-                Payment.invoice_id == invoice_id,
-                Payment.status.in_([PaymentStatus.detected, PaymentStatus.confirmed]),
-            )
+        stmt = select(func.coalesce(func.sum(Payment.amount_atomic), 0)).where(
+            Payment.invoice_id == invoice_id,
+            Payment.status.in_([PaymentStatus.detected, PaymentStatus.confirmed]),
         )
         result = await db.execute(stmt)
         return int(result.scalar_one())
@@ -549,11 +546,7 @@ class PaymentService:
         )
 
         # Recalculate invoice status with remaining non-orphaned payments
-        inv_stmt = (
-            select(Invoice)
-            .where(Invoice.id == payment.invoice_id)
-            .options(selectinload(Invoice.payments))
-        )
+        inv_stmt = select(Invoice).where(Invoice.id == payment.invoice_id).options(selectinload(Invoice.payments))
         inv_result = await db.execute(inv_stmt)
         invoice = inv_result.scalar_one_or_none()
 
@@ -570,11 +563,7 @@ class PaymentService:
 
         Used by detection engine to poll wallet-rpc for updated confirmations.
         """
-        stmt = (
-            select(Payment)
-            .where(Payment.status == PaymentStatus.detected)
-            .order_by(Payment.detected_at.asc())
-        )
+        stmt = select(Payment).where(Payment.status == PaymentStatus.detected).order_by(Payment.detected_at.asc())
         result = await db.execute(stmt)
         return list(result.scalars().all())
 

@@ -39,10 +39,7 @@ async def _auth_via_api_key(
     Lookup by prefix → bcrypt verify → load merchant → update last_used_at.
     """
     prefix = token[:KEY_PREFIX_LENGTH]
-    result = await db.execute(
-        select(ApiKey)
-        .where(ApiKey.key_prefix == prefix, ApiKey.is_active == True)
-    )
+    result = await db.execute(select(ApiKey).where(ApiKey.key_prefix == prefix, ApiKey.is_active == True))
     api_keys = result.scalars().all()
 
     if not api_keys:
@@ -77,11 +74,7 @@ async def _auth_via_api_key(
             detail="Merchant account is inactive.",
         )
 
-    await db.execute(
-        update(ApiKey)
-        .where(ApiKey.id == matched_key.id)
-        .values(last_used_at=datetime.now(timezone.utc))
-    )
+    await db.execute(update(ApiKey).where(ApiKey.id == matched_key.id).values(last_used_at=datetime.now(timezone.utc)))
     await db.commit()
 
     return merchant

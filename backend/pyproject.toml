@@ -24,3 +24,21 @@ dependencies = [
 [build-system]
 requires = ["setuptools>=75.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = [
+    "E712",  # SQLAlchemy requires == True/False for column comparisons
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = ["E501"]  # Long SQL strings and test signatures
+"tests/conftest.py" = ["E501", "F401"]  # pytest import by convention + SQL
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

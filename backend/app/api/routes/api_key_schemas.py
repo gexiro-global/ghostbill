@@ -26,6 +26,7 @@ class ApiKeyResponse(BaseModel):
 
 class ApiKeyCreateResponse(BaseModel):
     """Returned only on creation — plaintext key shown ONCE."""
+
     id: str
     key: str
     key_prefix: str
@@ -35,5 +36,6 @@ class ApiKeyCreateResponse(BaseModel):
 
 class ApiKeyCursorResponse(BaseModel):
     """Phase 6B: cursor pagination response."""
+
     data: list[ApiKeyResponse]
     has_more: bool

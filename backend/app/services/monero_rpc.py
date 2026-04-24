@@ -31,6 +31,7 @@ RETRY_BACKOFF_BASE: float = 1.0  # seconds
 
 # ─── Conversion helpers ─────────────────────────────────────────────────────
 
+
 def atomic_to_xmr(atomic: int) -> Decimal:
     """Convert piconero (atomic units) to XMR as Decimal."""
     return Decimal(str(atomic)) / Decimal(str(PICONERO))
@@ -42,6 +43,7 @@ def xmr_to_atomic(xmr: Decimal) -> int:
 
 
 # ─── Exceptions ──────────────────────────────────────────────────────────────
+
 
 class MoneroRPCError(Exception):
     """Base exception for wallet-rpc errors."""
@@ -55,10 +57,12 @@ class MoneroRPCError(Exception):
 
 class MoneroRPCConnectionError(MoneroRPCError):
     """Connection to wallet-rpc failed after retries."""
+
     pass
 
 
 # ─── RPC Client ──────────────────────────────────────────────────────────────
+
 
 class MoneroRPC:
     """Async wrapper for monero-wallet-rpc JSON-RPC.
@@ -70,9 +74,7 @@ class MoneroRPC:
     """
 
     def __init__(self) -> None:
-        self._url = (
-            f"http://{settings.wallet_rpc_host}:{settings.wallet_rpc_port}/json_rpc"
-        )
+        self._url = f"http://{settings.wallet_rpc_host}:{settings.wallet_rpc_port}/json_rpc"
         self._auth = httpx.DigestAuth(
             username=settings.wallet_rpc_user,
             password=settings.wallet_rpc_pass,
@@ -151,9 +153,7 @@ class MoneroRPC:
                     # Force new client on connection errors
                     await self.close()
 
-        raise MoneroRPCConnectionError(
-            f"wallet-rpc {method} failed after {MAX_RETRIES} retries: {last_exception}"
-        )
+        raise MoneroRPCConnectionError(f"wallet-rpc {method} failed after {MAX_RETRIES} retries: {last_exception}")
 
     # ─── Public methods ──────────────────────────────────────────────────
 
@@ -167,9 +167,7 @@ class MoneroRPC:
         result = await self._call("get_version")
         return str(result.get("version", "unknown"))
 
-    async def create_address(
-        self, account_index: int = 0, label: str = ""
-    ) -> dict:
+    async def create_address(self, account_index: int = 0, label: str = "") -> dict:
         """Create a new subaddress.
 
         Args:
@@ -275,9 +273,7 @@ class MoneroRPC:
             "unlocked_balance": int(result["unlocked_balance"]),
         }
 
-    async def check_tx_key(
-        self, txid: str, tx_key: str, address: str
-    ) -> dict:
+    async def check_tx_key(self, txid: str, tx_key: str, address: str) -> dict:
         """Verify a payment using tx secret key.
 
         Used for dispute resolution when merchant claims non-payment.

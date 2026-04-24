@@ -11,8 +11,8 @@ Algorithm (sorted set per identifier):
 5. EXPIRE key window -> auto-cleanup safety net
 """
 
-import time
 import logging
+import time
 from enum import Enum
 
 from redis.asyncio import Redis
@@ -114,12 +114,16 @@ class SlidingWindowRateLimiter:
             if current_count >= limit:
                 await self._redis.zrem(redis_key, member)
                 return RateLimitResult(
-                    allowed=False, limit=limit, remaining=0,
-                    reset_after=reset_after, retry_after=reset_after,
+                    allowed=False,
+                    limit=limit,
+                    remaining=0,
+                    reset_after=reset_after,
+                    retry_after=reset_after,
                 )
 
             return RateLimitResult(
-                allowed=True, limit=limit,
+                allowed=True,
+                limit=limit,
                 remaining=limit - current_count - 1,
                 reset_after=reset_after,
             )
@@ -127,7 +131,9 @@ class SlidingWindowRateLimiter:
         except Exception as e:
             logger.error(f"Rate limiter Redis error: {e}")
             return RateLimitResult(
-                allowed=True, limit=limit, remaining=limit,
+                allowed=True,
+                limit=limit,
+                remaining=limit,
                 reset_after=window,
             )
 
@@ -153,8 +159,8 @@ class SlidingWindowRateLimiter:
 # ── Per-Merchant Rate Limiter (Phase 6C) ────────────────────────────
 
 MERCHANT_LIMITS: dict[str, int] = {
-    "write": 120,   # POST/PATCH/DELETE/PUT per minute
-    "read": 300,    # GET per minute
+    "write": 120,  # POST/PATCH/DELETE/PUT per minute
+    "read": 300,  # GET per minute
 }
 
 
@@ -208,7 +214,9 @@ class MerchantRateLimiter:
         except Exception as e:
             logger.error(f"Merchant rate limiter Redis error: {e}")
             return RateLimitResult(
-                allowed=True, limit=limit, remaining=limit,
+                allowed=True,
+                limit=limit,
+                remaining=limit,
                 reset_after=60.0,
             )
 

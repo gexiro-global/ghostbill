@@ -17,7 +17,7 @@ No webhook dispatched for expired invoices (merchant can poll or check dashboard
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import and_, exists, select, update
+from sqlalchemy import and_, exists, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
@@ -46,16 +46,15 @@ class ExpirationService:
         now = datetime.now(timezone.utc)
 
         # Subquery: invoice has at least one detected or confirmed payment
-        has_active_payment = (
-            exists()
-            .where(
-                and_(
-                    Payment.invoice_id == Invoice.id,
-                    Payment.status.in_([
+        has_active_payment = exists().where(
+            and_(
+                Payment.invoice_id == Invoice.id,
+                Payment.status.in_(
+                    [
                         PaymentStatus.detected,
                         PaymentStatus.confirmed,
-                    ]),
-                )
+                    ]
+                ),
             )
         )
 

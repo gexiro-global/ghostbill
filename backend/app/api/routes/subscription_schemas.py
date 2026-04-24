@@ -20,6 +20,7 @@ class SubscriptionCreateRequest(BaseModel):
 
 class SubscriptionUpdateRequest(BaseModel):
     """Phase 6A: PATCH fields. All optional. None = clear pending change."""
+
     amount_xmr: str | None = Field(default=None, description="New XMR amount (pending)")
     interval_days: int | None = Field(default=None, description="New interval (pending)")
     grace_days_soft: int | None = Field(default=None, description="New soft grace (pending)")
@@ -29,6 +30,7 @@ class SubscriptionUpdateRequest(BaseModel):
 
 class PrepayRequest(BaseModel):
     """Phase 8B: Pre-payment request."""
+
     periods: int = Field(..., ge=1, le=36, description="Number of periods to prepay (1-36)")
 
 
@@ -70,12 +72,14 @@ class SubscriptionDetailResponse(SubscriptionResponse):
 
 class SubscriptionCursorResponse(BaseModel):
     """Phase 6B: cursor pagination response."""
+
     data: list[SubscriptionResponse]
     has_more: bool
 
 
 class PrepayResponse(BaseModel):
     """Phase 8B: Pre-payment response with invoice details."""
+
     subscription_id: str
     invoice_id: str
     periods: int

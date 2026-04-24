@@ -32,7 +32,8 @@ logger = logging.getLogger(__name__)
 
 
 async def handle_subscription_payment(
-    db: AsyncSession, invoice_id: uuid.UUID,
+    db: AsyncSession,
+    invoice_id: uuid.UUID,
 ) -> None:
     """Called when invoice transitions to paid/overpaid/late_paid.
 
@@ -50,39 +51,33 @@ async def handle_subscription_payment(
         # Phase 8B: handle prepay payment
         sub_id_str = meta.get("subscription_id")
         if sub_id_str:
-            sub_stmt = (
-                select(Subscription)
-                .where(Subscription.id == uuid.UUID(sub_id_str))
-                .with_for_update()
-            )
+            sub_stmt = select(Subscription).where(Subscription.id == uuid.UUID(sub_id_str)).with_for_update()
             sub = (await db.execute(sub_stmt)).scalar_one_or_none()
             if sub is not None:
                 from app.services.subscription_prepay import handle_prepay_payment
+
                 await handle_prepay_payment(db, invoice, sub)
                 # Fire subscription.prepaid webhook (fulfillment)
                 try:
                     from app.services.webhook_service import webhook_service
+
                     await webhook_service.dispatch_subscription_event(
-                        db=db, event_type="subscription.prepaid",
-                        subscription=sub, invoice_id=invoice_id,
+                        db=db,
+                        event_type="subscription.prepaid",
+                        subscription=sub,
+                        invoice_id=invoice_id,
                     )
                 except Exception as exc:
                     logger.warning("Failed to fire subscription.prepaid for %s: %s", sub.id, exc)
         return
 
     # Standard flow: check subscription_payments for this invoice
-    sp_stmt = select(SubscriptionPayment).where(
-        SubscriptionPayment.invoice_id == invoice_id
-    )
+    sp_stmt = select(SubscriptionPayment).where(SubscriptionPayment.invoice_id == invoice_id)
     sp = (await db.execute(sp_stmt)).scalar_one_or_none()
     if sp is None:
         return
 
-    sub_stmt = (
-        select(Subscription)
-        .where(Subscription.id == sp.subscription_id)
-        .with_for_update()
-    )
+    sub_stmt = select(Subscription).where(Subscription.id == sp.subscription_id).with_for_update()
     sub = (await db.execute(sub_stmt)).scalar_one_or_none()
     if sub is None:
         return
@@ -111,9 +106,7 @@ async def check_grace_periods(db: AsyncSession) -> dict[str, int]:
         .where(
             Subscription.status == SubscriptionStatus.active,
             Invoice.status.in_([InvoiceStatus.pending, InvoiceStatus.partially_paid]),
-            SubscriptionPayment.period_start + text(
-                "make_interval(days => subscriptions.grace_days_soft)"
-            ) < now,
+            SubscriptionPayment.period_start + text("make_interval(days => subscriptions.grace_days_soft)") < now,
         )
         .group_by(Subscription.id)
     )
@@ -132,9 +125,7 @@ async def check_grace_periods(db: AsyncSession) -> dict[str, int]:
         .where(
             Subscription.status == SubscriptionStatus.past_due,
             Invoice.status.in_([InvoiceStatus.pending, InvoiceStatus.partially_paid]),
-            SubscriptionPayment.period_start + text(
-                "make_interval(days => subscriptions.grace_days_hard)"
-            ) < now,
+            SubscriptionPayment.period_start + text("make_interval(days => subscriptions.grace_days_hard)") < now,
         )
         .group_by(Subscription.id)
     )
@@ -147,9 +138,12 @@ async def check_grace_periods(db: AsyncSession) -> dict[str, int]:
         # Phase 6B: fire subscription.expired event
         try:
             from app.services.webhook_service import webhook_service
+
             await webhook_service.dispatch_subscription_event(
-                db=db, event_type="subscription.expired",
-                subscription=sub, reason="hard_grace_exceeded",
+                db=db,
+                event_type="subscription.expired",
+                subscription=sub,
+                reason="hard_grace_exceeded",
             )
         except Exception as exc:
             logger.warning("Failed to fire subscription.expired for %s: %s", sub.id, exc)
@@ -161,9 +155,13 @@ async def check_grace_periods(db: AsyncSession) -> dict[str, int]:
         .join(Invoice, SubscriptionPayment.invoice_id == Invoice.id)
         .where(
             Subscription.status == SubscriptionStatus.past_due,
-            Invoice.status.in_([
-                InvoiceStatus.paid, InvoiceStatus.overpaid, InvoiceStatus.late_paid,
-            ]),
+            Invoice.status.in_(
+                [
+                    InvoiceStatus.paid,
+                    InvoiceStatus.overpaid,
+                    InvoiceStatus.late_paid,
+                ]
+            ),
         )
         .group_by(Subscription.id)
     )

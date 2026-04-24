@@ -16,8 +16,9 @@ import httpx
 import pytest
 
 from tests.conftest import (
-    PICONERO,
+    TEST_VIEW_KEY,
     auth_headers,
+    cleanup_merchant_data,
     create_invoice,
     generate_fake_tx_hash,
     generate_unique_address,
@@ -27,14 +28,11 @@ from tests.conftest import (
     sum_payments_for_invoice,
     update_invoice_status_db,
     verify_webhook_signature,
-    cleanup_merchant_data,
-    TEST_VIEW_KEY,
 )
 
 
 @pytest.mark.asyncio
 class TestE2EFullFlow:
-
     async def test_complete_payment_flow(self, client: httpx.AsyncClient):
         """Full lifecycle: register → invoice → payment → paid → verify."""
 
@@ -54,7 +52,7 @@ class TestE2EFullFlow:
         reg_data = reg_resp.json()
         merchant_id = reg_data["merchant_id"]
         api_key = reg_data["api_keys"]["live"]
-        webhook_secret = reg_data["webhook_secret"]
+        _webhook_secret = reg_data["webhook_secret"]
 
         assert api_key.startswith("gb_live_")
         print(f"\n\u2713 Step 1: Merchant registered: {merchant_id}")
@@ -67,8 +65,11 @@ class TestE2EFullFlow:
 
         # Step 3: Create invoice
         inv = await create_invoice(
-            client, api_key, amount_xmr="0.75",
-            description="E2E test invoice", expires_in=3600,
+            client,
+            api_key,
+            amount_xmr="0.75",
+            description="E2E test invoice",
+            expires_in=3600,
             metadata={"order_id": "ORD-12345"},
         )
         invoice_id = inv["id"]
@@ -79,10 +80,13 @@ class TestE2EFullFlow:
 
         # Step 4: Simulate payment (DB INSERT)
         tx_hash = generate_fake_tx_hash()
-        payment = await insert_simulated_payment(
-            invoice_id, amount_atomic=750000000000,
-            tx_hash=tx_hash, status="confirmed",
-            confirmations=10, block_height=3200000,
+        _payment = await insert_simulated_payment(
+            invoice_id,
+            amount_atomic=750000000000,
+            tx_hash=tx_hash,
+            status="confirmed",
+            confirmations=10,
+            block_height=3200000,
         )
         print(f"\u2713 Step 4: Payment simulated: tx={tx_hash[:16]}...")
 
@@ -102,7 +106,8 @@ class TestE2EFullFlow:
 
         # Step 7: Verify payment via API (cursor pagination)
         payments_resp = await client.get(
-            "/v1/payments", params={"invoice_id": invoice_id},
+            "/v1/payments",
+            params={"invoice_id": invoice_id},
             headers=auth_headers(api_key),
         )
         assert payments_resp.status_code == 200
@@ -113,7 +118,8 @@ class TestE2EFullFlow:
 
         # Step 8: List invoices (cursor pagination)
         list_resp = await client.get(
-            "/v1/invoices", params={"status": "paid", "limit": 10},
+            "/v1/invoices",
+            params={"status": "paid", "limit": 10},
             headers=auth_headers(api_key),
         )
         assert list_resp.status_code == 200
@@ -162,7 +168,8 @@ class TestE2EFullFlow:
         print("\u2713 Second payment 0.6 XMR \u2192 paid")
 
         payments_resp = await client.get(
-            "/v1/payments", params={"invoice_id": invoice_id},
+            "/v1/payments",
+            params={"invoice_id": invoice_id},
             headers=auth_headers(api_key),
         )
         assert len(payments_resp.json()["data"]) == 2
@@ -173,7 +180,6 @@ class TestE2EFullFlow:
 
 @pytest.mark.asyncio
 class TestAPIKeyManagement:
-
     async def test_api_key_lifecycle(self, client: httpx.AsyncClient, test_merchant: dict):
         """Create \u2192 list \u2192 use \u2192 revoke \u2192 verify revoked."""
         api_key = test_merchant["api_key_live"]
@@ -218,7 +224,6 @@ class TestAPIKeyManagement:
 
 @pytest.mark.asyncio
 class TestWebhookHMAC:
-
     async def test_hmac_signature_correctness(self):
         secret = "test_webhook_secret_abc123"
         payload = {"event": "payment.confirmed", "payment": {"id": "test", "amount_atomic": 500000000000}}
@@ -239,7 +244,6 @@ class TestWebhookHMAC:
 
 @pytest.mark.asyncio
 class TestMerchantUpdate:
-
     async def test_update_merchant_name(self, client: httpx.AsyncClient, test_merchant: dict):
         api_key = test_merchant["api_key_live"]
         new_name = f"Updated_{uuid.uuid4().hex[:6]}"
@@ -274,7 +278,6 @@ class TestMerchantUpdate:
 
 @pytest.mark.asyncio
 class TestPublicEndpoints:
-
     async def test_health_endpoint(self, client: httpx.AsyncClient):
         resp = await client.get("/health")
         assert resp.status_code == 200
@@ -290,7 +293,6 @@ class TestPublicEndpoints:
 
 @pytest.mark.asyncio
 class TestInvoiceMetadata:
-
     async def test_metadata_preserved(self, client: httpx.AsyncClient, test_merchant: dict):
         api_key = test_merchant["api_key_live"]
         metadata = {"order_id": "ORD-99999", "items": ["a", "b"]}

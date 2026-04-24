@@ -11,7 +11,6 @@ from uuid import UUID
 
 from app.db.models import Invoice, Payment, Subscription
 
-
 # ─── Constants ────────────────────────────────────────────────────────────────
 
 MAX_ATTEMPTS: int = 7
@@ -22,18 +21,26 @@ JITTER_MAX: float = 0.2
 
 # Valid event types (20 total — Phase 8B)
 VALID_EVENTS: list[str] = [
-    "payment.detected", "payment.confirmed", "payment.orphaned",
-    "invoice.paid", "invoice.expired", "invoice.partially_paid",
-    "invoice.overpaid", "invoice.late_paid",
-    "subscription.created", "subscription.renewed", "subscription.past_due",
-    "subscription.cancelled", "subscription.payment_confirmed",
-    "subscription.updated",    # Phase 6A
-    "subscription.paused",     # Phase 6B
-    "subscription.resumed",    # Phase 6B
-    "subscription.expired",    # Phase 6B
-    "subscription.trial_started", # Phase 8A
-    "subscription.trial_ended",   # Phase 8A
-    "subscription.prepaid",    # Phase 8B
+    "payment.detected",
+    "payment.confirmed",
+    "payment.orphaned",
+    "invoice.paid",
+    "invoice.expired",
+    "invoice.partially_paid",
+    "invoice.overpaid",
+    "invoice.late_paid",
+    "subscription.created",
+    "subscription.renewed",
+    "subscription.past_due",
+    "subscription.cancelled",
+    "subscription.payment_confirmed",
+    "subscription.updated",  # Phase 6A
+    "subscription.paused",  # Phase 6B
+    "subscription.resumed",  # Phase 6B
+    "subscription.expired",  # Phase 6B
+    "subscription.trial_started",  # Phase 8A
+    "subscription.trial_ended",  # Phase 8A
+    "subscription.prepaid",  # Phase 8B
 ]
 
 
@@ -42,7 +49,9 @@ VALID_EVENTS: list[str] = [
 
 def sign_payload(payload_bytes: bytes, secret: str) -> str:
     return hmac.new(
-        key=secret.encode("utf-8"), msg=payload_bytes, digestmod=hashlib.sha256,
+        key=secret.encode("utf-8"),
+        msg=payload_bytes,
+        digestmod=hashlib.sha256,
     ).hexdigest()
 
 
@@ -66,16 +75,22 @@ def calculate_next_retry(attempt_count: int) -> datetime | None:
 def build_payment_payload(payment: Payment, invoice: Invoice) -> dict[str, Any]:
     return {
         "payment": {
-            "id": str(payment.id), "invoice_id": str(payment.invoice_id),
-            "tx_hash": payment.tx_hash, "amount_atomic": payment.amount_atomic,
-            "amount_xmr": str(payment.amount_xmr), "status": payment.status.value,
-            "confirmations": payment.confirmations, "block_height": payment.block_height,
+            "id": str(payment.id),
+            "invoice_id": str(payment.invoice_id),
+            "tx_hash": payment.tx_hash,
+            "amount_atomic": payment.amount_atomic,
+            "amount_xmr": str(payment.amount_xmr),
+            "status": payment.status.value,
+            "confirmations": payment.confirmations,
+            "block_height": payment.block_height,
             "detected_at": payment.detected_at.isoformat() if payment.detected_at else None,
             "confirmed_at": payment.confirmed_at.isoformat() if payment.confirmed_at else None,
         },
         "invoice": {
-            "id": str(invoice.id), "status": invoice.status.value,
-            "amount_atomic": invoice.amount_atomic, "amount_xmr": str(invoice.amount_xmr),
+            "id": str(invoice.id),
+            "status": invoice.status.value,
+            "amount_atomic": invoice.amount_atomic,
+            "amount_xmr": str(invoice.amount_xmr),
             "description": invoice.description,
         },
     }
@@ -84,10 +99,13 @@ def build_payment_payload(payment: Payment, invoice: Invoice) -> dict[str, Any]:
 def build_invoice_payload(invoice: Invoice) -> dict[str, Any]:
     return {
         "invoice": {
-            "id": str(invoice.id), "status": invoice.status.value,
-            "amount_atomic": invoice.amount_atomic, "amount_xmr": str(invoice.amount_xmr),
+            "id": str(invoice.id),
+            "status": invoice.status.value,
+            "amount_atomic": invoice.amount_atomic,
+            "amount_xmr": str(invoice.amount_xmr),
             "fiat_amount": str(invoice.fiat_amount) if invoice.fiat_amount else None,
-            "fiat_currency": invoice.fiat_currency, "description": invoice.description,
+            "fiat_currency": invoice.fiat_currency,
+            "description": invoice.description,
             "expires_at": invoice.expires_at.isoformat() if invoice.expires_at else None,
             "paid_at": invoice.paid_at.isoformat() if invoice.paid_at else None,
         },
@@ -95,15 +113,19 @@ def build_invoice_payload(invoice: Invoice) -> dict[str, Any]:
 
 
 def build_subscription_payload(
-    event_type: str, subscription: Subscription,
-    invoice_id: UUID | None = None, period_start: datetime | None = None,
-    period_end: datetime | None = None, reason: str | None = None,
+    event_type: str,
+    subscription: Subscription,
+    invoice_id: UUID | None = None,
+    period_start: datetime | None = None,
+    period_end: datetime | None = None,
+    reason: str | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "subscription": {
-            "id": str(subscription.id), "merchant_id": str(subscription.merchant_id),
+            "id": str(subscription.id),
+            "merchant_id": str(subscription.merchant_id),
             "customer_id": str(subscription.customer_id),
-            "status": subscription.status.value if hasattr(subscription.status, 'value') else str(subscription.status),
+            "status": subscription.status.value if hasattr(subscription.status, "value") else str(subscription.status),
             "amount_atomic": subscription.amount_atomic,
             "amount_xmr": str(subscription.amount_xmr),
             "interval_days": subscription.interval_days,

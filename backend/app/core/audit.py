@@ -135,7 +135,8 @@ async def audit_log(
         await db.execute(
             text("""
                 INSERT INTO audit_log (id, merchant_id, action, entity_type, entity_id, details, ip_address, created_at)
-                VALUES (:id::uuid, :merchant_id::uuid, :action, :entity_type, :entity_id::uuid, :details::jsonb, NULL, :created_at)
+                VALUES (:id::uuid, :merchant_id::uuid, :action, :entity_type,
+                    :entity_id::uuid, :details::jsonb, NULL, :created_at)
             """),
             {
                 "id": row_id,

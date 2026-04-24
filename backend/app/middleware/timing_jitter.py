@@ -11,8 +11,8 @@ Uses asyncio.sleep (non-blocking, doesn't hold threads).
 """
 
 import asyncio
-import random
 import logging
+import random
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
@@ -27,9 +27,7 @@ JITTER_MAX_MS = 200
 class TimingJitterMiddleware(BaseHTTPMiddleware):
     """Adds random timing jitter to all responses."""
 
-    async def dispatch(
-        self, request: Request, call_next: RequestResponseEndpoint
-    ) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         response = await call_next(request)
 
         # Skip jitter for health checks (monitoring needs fast responses)

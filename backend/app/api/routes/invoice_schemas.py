@@ -5,7 +5,6 @@ Extracted from invoices.py for maintainability (Phase 6B).
 
 from pydantic import BaseModel, Field
 
-
 # ─── Request schemas ─────────────────────────────────────────────────────
 
 

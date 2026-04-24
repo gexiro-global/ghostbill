@@ -11,13 +11,15 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from redis.asyncio import Redis
-from sqlalchemy import func, select, case, and_
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
-    Invoice, InvoiceStatus,
-    Payment, PaymentStatus,
-    Subscription, SubscriptionStatus,
+    Invoice,
+    Payment,
+    PaymentStatus,
+    Subscription,
+    SubscriptionStatus,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,7 +60,10 @@ async def _set_cache(redis: Redis, key: str, data: dict):
 
 
 async def get_revenue(
-    db: AsyncSession, redis: Redis, merchant_id: uuid.UUID, period: str = "30d",
+    db: AsyncSession,
+    redis: Redis,
+    merchant_id: uuid.UUID,
+    period: str = "30d",
 ) -> dict:
     """Daily revenue (confirmed payments) over period."""
     cache_key = f"analytics:{merchant_id}:revenue:{period}"
@@ -98,12 +103,14 @@ async def get_revenue(
         atomic = int(row.total_atomic or 0)
         grand_total += atomic
         grand_count += row.count
-        data.append({
-            "date": row.day.strftime("%Y-%m-%d"),
-            "count": row.count,
-            "amount_atomic": atomic,
-            "amount_xmr": _atomic_to_xmr(atomic),
-        })
+        data.append(
+            {
+                "date": row.day.strftime("%Y-%m-%d"),
+                "count": row.count,
+                "amount_atomic": atomic,
+                "amount_xmr": _atomic_to_xmr(atomic),
+            }
+        )
 
     result = {
         "period": period,
@@ -123,7 +130,10 @@ async def get_revenue(
 
 
 async def get_invoice_stats(
-    db: AsyncSession, redis: Redis, merchant_id: uuid.UUID, period_days: int = 30,
+    db: AsyncSession,
+    redis: Redis,
+    merchant_id: uuid.UUID,
+    period_days: int = 30,
 ) -> dict:
     """Invoice status breakdown."""
     cache_key = f"analytics:{merchant_id}:invoices:{period_days}"
@@ -156,7 +166,7 @@ async def get_invoice_stats(
 
     # Sort: paid first, then by count desc
     status_order = ["paid", "pending", "expired", "partially_paid", "overpaid", "late_paid", "cancelled"]
-    data.sort(key=lambda x: (status_order.index(x["status"]) if x["status"] in status_order else 99))
+    data.sort(key=lambda x: status_order.index(x["status"]) if x["status"] in status_order else 99)
 
     result = {"total": total, "data": data, "period_days": period_days}
     await _set_cache(redis, cache_key, result)
@@ -169,7 +179,9 @@ async def get_invoice_stats(
 
 
 async def get_subscription_metrics(
-    db: AsyncSession, redis: Redis, merchant_id: uuid.UUID,
+    db: AsyncSession,
+    redis: Redis,
+    merchant_id: uuid.UUID,
 ) -> dict:
     """Subscription health: counts, MRR, churn, growth."""
     cache_key = f"analytics:{merchant_id}:subscriptions"
@@ -198,40 +210,25 @@ async def get_subscription_metrics(
         total += row.count
 
     # MRR: sum of (amount_atomic * 30 / interval_days) for active subs
-    mrr_stmt = (
-        select(
-            func.sum(
-                (Subscription.amount_atomic * 30) / Subscription.interval_days
-            ).label("mrr")
-        )
-        .where(
-            Subscription.merchant_id == merchant_id,
-            Subscription.status == SubscriptionStatus.active,
-        )
+    mrr_stmt = select(func.sum((Subscription.amount_atomic * 30) / Subscription.interval_days).label("mrr")).where(
+        Subscription.merchant_id == merchant_id,
+        Subscription.status == SubscriptionStatus.active,
     )
     mrr_row = (await db.execute(mrr_stmt)).scalar_one_or_none()
     mrr_atomic = int(mrr_row or 0)
 
     # Churn (30d): cancelled + expired in last 30 days
-    churn_stmt = (
-        select(func.count())
-        .where(
-            Subscription.merchant_id == merchant_id,
-            Subscription.status.in_(
-                [SubscriptionStatus.cancelled, SubscriptionStatus.expired]
-            ),
-            Subscription.updated_at >= thirty_days_ago,
-        )
+    churn_stmt = select(func.count()).where(
+        Subscription.merchant_id == merchant_id,
+        Subscription.status.in_([SubscriptionStatus.cancelled, SubscriptionStatus.expired]),
+        Subscription.updated_at >= thirty_days_ago,
     )
     churn_30d = (await db.execute(churn_stmt)).scalar_one() or 0
 
     # Net new (30d): created in last 30 days
-    new_stmt = (
-        select(func.count())
-        .where(
-            Subscription.merchant_id == merchant_id,
-            Subscription.created_at >= thirty_days_ago,
-        )
+    new_stmt = select(func.count()).where(
+        Subscription.merchant_id == merchant_id,
+        Subscription.created_at >= thirty_days_ago,
     )
     new_30d = (await db.execute(new_stmt)).scalar_one() or 0
 

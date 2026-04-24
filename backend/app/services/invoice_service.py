@@ -43,8 +43,8 @@ logger = logging.getLogger(__name__)
 
 # ─── Constants ───────────────────────────────────────────────────────────────
 
-EXPIRES_IN_MIN: int = 600       # 10 minutes
-EXPIRES_IN_MAX: int = 2592000   # 30 days (subscription grace periods)
+EXPIRES_IN_MIN: int = 600  # 10 minutes
+EXPIRES_IN_MAX: int = 2592000  # 30 days (subscription grace periods)
 EXPIRES_IN_DEFAULT: int = 3600  # 1 hour
 
 # ─── State Machine ──────────────────────────────────────────────────────────
@@ -80,32 +80,39 @@ TERMINAL_STATUSES: set[InvoiceStatus] = {
 
 # ─── Exceptions ──────────────────────────────────────────────────────────────
 
+
 class InvoiceError(Exception):
     """Base invoice service error."""
+
     pass
 
 
 class InvoiceNotFoundError(InvoiceError):
     """Invoice does not exist or does not belong to merchant."""
+
     pass
 
 
 class InvoiceValidationError(InvoiceError):
     """Input validation failed."""
+
     pass
 
 
 class InvoiceStateError(InvoiceError):
     """Invalid state transition attempted."""
+
     pass
 
 
 class WalletUnavailableError(InvoiceError):
     """wallet-rpc is not reachable (monerod syncing, container down, etc.)."""
+
     pass
 
 
 # ─── Service ─────────────────────────────────────────────────────────────────
+
 
 class InvoiceService:
     """Invoice business logic — stateless, operates on provided DB session."""
@@ -122,9 +129,7 @@ class InvoiceService:
         try:
             amount = Decimal(str(raw))
         except (InvalidOperation, ValueError, TypeError):
-            raise InvoiceValidationError(
-                f"Invalid amount_xmr: {raw!r}. Must be a positive decimal number."
-            )
+            raise InvoiceValidationError(f"Invalid amount_xmr: {raw!r}. Must be a positive decimal number.")
 
         if amount <= 0:
             raise InvoiceValidationError("amount_xmr must be greater than 0.")
@@ -142,9 +147,7 @@ class InvoiceService:
             return EXPIRES_IN_DEFAULT
 
         if not isinstance(expires_in, int) or expires_in < EXPIRES_IN_MIN or expires_in > EXPIRES_IN_MAX:
-            raise InvoiceValidationError(
-                f"expires_in must be between {EXPIRES_IN_MIN} and {EXPIRES_IN_MAX} seconds."
-            )
+            raise InvoiceValidationError(f"expires_in must be between {EXPIRES_IN_MIN} and {EXPIRES_IN_MAX} seconds.")
         return expires_in
 
     @staticmethod
@@ -203,14 +206,10 @@ class InvoiceService:
             addr_result = await rpc.create_address(account_index=0, label=label)
         except MoneroRPCConnectionError as exc:
             logger.error("wallet-rpc unavailable during invoice creation: %s", exc)
-            raise WalletUnavailableError(
-                "Payment system is temporarily unavailable. Please try again later."
-            ) from exc
+            raise WalletUnavailableError("Payment system is temporarily unavailable. Please try again later.") from exc
         except MoneroRPCError as exc:
             logger.error("wallet-rpc error during create_address: %s", exc)
-            raise WalletUnavailableError(
-                "Payment system error. Please try again later."
-            ) from exc
+            raise WalletUnavailableError("Payment system error. Please try again later.") from exc
 
         subaddress: str = addr_result["address"]
         address_index: int = addr_result["address_index"]
@@ -285,10 +284,7 @@ class InvoiceService:
 
         Raises InvoiceNotFoundError if not found.
         """
-        stmt = (
-            select(Invoice)
-            .where(Invoice.id == invoice_id, Invoice.merchant_id == merchant_id)
-        )
+        stmt = select(Invoice).where(Invoice.id == invoice_id, Invoice.merchant_id == merchant_id)
         result = await db.execute(stmt)
         invoice = result.scalar_one_or_none()
 
@@ -327,13 +323,7 @@ class InvoiceService:
         total = (await db.execute(count_stmt)).scalar_one()
 
         # Data query
-        data_stmt = (
-            select(Invoice)
-            .where(*base_where)
-            .order_by(Invoice.created_at.desc())
-            .limit(limit)
-            .offset(offset)
-        )
+        data_stmt = select(Invoice).where(*base_where).order_by(Invoice.created_at.desc()).limit(limit).offset(offset)
         result = await db.execute(data_stmt)
         invoices = list(result.scalars().all())
 
@@ -366,24 +356,18 @@ class InvoiceService:
 
         if invoice.status != InvoiceStatus.pending:
             raise InvoiceStateError(
-                f"Cannot cancel invoice with status '{invoice.status.value}'. "
-                f"Only pending invoices can be cancelled."
+                f"Cannot cancel invoice with status '{invoice.status.value}'. Only pending invoices can be cancelled."
             )
 
         # Check for existing payments (safety net)
-        payment_count_stmt = (
-            select(func.count(Payment.id))
-            .where(
-                Payment.invoice_id == invoice_id,
-                Payment.status.in_([PaymentStatus.detected, PaymentStatus.confirmed]),
-            )
+        payment_count_stmt = select(func.count(Payment.id)).where(
+            Payment.invoice_id == invoice_id,
+            Payment.status.in_([PaymentStatus.detected, PaymentStatus.confirmed]),
         )
         payment_count = (await db.execute(payment_count_stmt)).scalar_one()
 
         if payment_count > 0:
-            raise InvoiceStateError(
-                "Cannot cancel invoice that has detected or confirmed payments."
-            )
+            raise InvoiceStateError("Cannot cancel invoice that has detected or confirmed payments.")
 
         # Transition
         invoice.status = InvoiceStatus.cancelled
@@ -432,9 +416,7 @@ class InvoiceService:
             return invoice
 
         if not self.can_transition(invoice.status, new_status):
-            raise InvoiceStateError(
-                f"Invalid transition: {invoice.status.value} → {new_status.value}"
-            )
+            raise InvoiceStateError(f"Invalid transition: {invoice.status.value} → {new_status.value}")
 
         old_status = invoice.status
         invoice.status = new_status
@@ -450,7 +432,7 @@ class InvoiceService:
         # Audit log
         audit = AuditLog(
             merchant_id=invoice.merchant_id,
-            action=f"invoice.status_changed",
+            action="invoice.status_changed",
             entity_type="invoice",
             entity_id=invoice.id,
             details={

@@ -6,7 +6,6 @@ Phase 6C: SkipRenewalError now carries result_type for event logging.
 
 from app.db.models import SubscriptionStatus
 
-
 # ── State Machine ────────────────────────────────────────────────────────────
 
 VALID_TRANSITIONS: dict[SubscriptionStatus, list[SubscriptionStatus]] = {
@@ -43,21 +42,25 @@ TERMINAL_STATUSES: set[SubscriptionStatus] = {
 
 class SubscriptionError(Exception):
     """Base subscription service error."""
+
     pass
 
 
 class SubscriptionNotFoundError(SubscriptionError):
     """Subscription not found or wrong merchant."""
+
     pass
 
 
 class SubscriptionValidationError(SubscriptionError):
     """Input validation failed."""
+
     pass
 
 
 class SubscriptionStateError(SubscriptionError):
     """Invalid state transition."""
+
     pass
 
 

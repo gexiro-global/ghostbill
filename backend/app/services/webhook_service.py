@@ -45,8 +45,12 @@ class WebhookService:
     """Webhook dispatch — stateless, operates on provided DB session."""
 
     async def queue_webhook(
-        self, db: AsyncSession, merchant: Merchant, event_type: str,
-        payload: dict[str, Any], invoice_id: uuid.UUID | None = None,
+        self,
+        db: AsyncSession,
+        merchant: Merchant,
+        event_type: str,
+        payload: dict[str, Any],
+        invoice_id: uuid.UUID | None = None,
     ) -> WebhookDelivery | None:
         """Create webhook delivery record. Returns None if no URL configured."""
         if not merchant.webhook_url or not merchant.webhook_secret:
@@ -57,9 +61,14 @@ class WebhookService:
             return None
 
         delivery = WebhookDelivery(
-            merchant_id=merchant.id, invoice_id=invoice_id, event_type=event_type,
-            payload=payload, url=merchant.webhook_url, status=WebhookStatus.pending,
-            attempts=0, max_attempts=MAX_ATTEMPTS,
+            merchant_id=merchant.id,
+            invoice_id=invoice_id,
+            event_type=event_type,
+            payload=payload,
+            url=merchant.webhook_url,
+            status=WebhookStatus.pending,
+            attempts=0,
+            max_attempts=MAX_ATTEMPTS,
             next_retry_at=datetime.now(timezone.utc),
         )
         db.add(delivery)
@@ -68,8 +77,12 @@ class WebhookService:
         return delivery
 
     async def dispatch_events(
-        self, db: AsyncSession, events: list[str], merchant: Merchant,
-        invoice: Invoice, payment: Payment | None = None,
+        self,
+        db: AsyncSession,
+        events: list[str],
+        merchant: Merchant,
+        invoice: Invoice,
+        payment: Payment | None = None,
     ) -> list[WebhookDelivery]:
         """Queue webhook deliveries for payment/invoice events."""
         deliveries = []
@@ -86,18 +99,22 @@ class WebhookService:
         return deliveries
 
     async def dispatch_subscription_event(
-        self, db: AsyncSession, event_type: str, subscription: Subscription,
-        invoice_id: uuid.UUID | None = None, period_start: datetime | None = None,
-        period_end: datetime | None = None, reason: str | None = None,
+        self,
+        db: AsyncSession,
+        event_type: str,
+        subscription: Subscription,
+        invoice_id: uuid.UUID | None = None,
+        period_start: datetime | None = None,
+        period_end: datetime | None = None,
+        reason: str | None = None,
     ) -> WebhookDelivery | None:
         """Queue a single subscription webhook event."""
-        merchant = (await db.execute(
-            select(Merchant).where(Merchant.id == subscription.merchant_id)
-        )).scalar_one_or_none()
+        merchant = (
+            await db.execute(select(Merchant).where(Merchant.id == subscription.merchant_id))
+        ).scalar_one_or_none()
         if merchant is None:
             return None
-        payload = build_subscription_payload(
-            event_type, subscription, invoice_id, period_start, period_end, reason)
+        payload = build_subscription_payload(event_type, subscription, invoice_id, period_start, period_end, reason)
         payload["event"] = event_type
         payload["timestamp"] = datetime.now(timezone.utc).isoformat()
         return await self.queue_webhook(db, merchant, event_type, payload)
@@ -105,9 +122,7 @@ class WebhookService:
     async def attempt_delivery(self, delivery: WebhookDelivery, webhook_secret: str) -> bool:
         """Attempt to deliver a single webhook via HTTP POST."""
         await asyncio.sleep(random.uniform(JITTER_MIN, JITTER_MAX))
-        payload_bytes = json.dumps(
-            delivery.payload, separators=(",", ":"), sort_keys=True
-        ).encode("utf-8")
+        payload_bytes = json.dumps(delivery.payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
         signature = sign_payload(payload_bytes, webhook_secret)
         headers = {
             "Content-Type": "application/json",
@@ -118,8 +133,10 @@ class WebhookService:
         }
         try:
             response = await tor_proxy.post(
-                url=delivery.url, content=payload_bytes,
-                headers=headers, timeout=DELIVERY_TIMEOUT,
+                url=delivery.url,
+                content=payload_bytes,
+                headers=headers,
+                timeout=DELIVERY_TIMEOUT,
             )
             delivery.response_code = response.status_code
             delivery.response_body = response.text[:2048] if response.text else None
@@ -138,7 +155,8 @@ class WebhookService:
         stmt = (
             select(WebhookDelivery)
             .where(WebhookDelivery.status == WebhookStatus.pending, WebhookDelivery.next_retry_at <= now)
-            .order_by(WebhookDelivery.next_retry_at.asc()).limit(limit)
+            .order_by(WebhookDelivery.next_retry_at.asc())
+            .limit(limit)
         )
         return list((await db.execute(stmt)).scalars().all())
 
@@ -172,17 +190,25 @@ class WebhookService:
         db.add(dlq_entry)
         logger.warning(
             "Webhook dead-lettered: %s, event=%s, merchant=%s",
-            delivery.id, delivery.event_type, delivery.merchant_id,
+            delivery.id,
+            delivery.event_type,
+            delivery.merchant_id,
         )
 
     async def retry_delivery(
-        self, db: AsyncSession, merchant_id: uuid.UUID, delivery_id: uuid.UUID,
+        self,
+        db: AsyncSession,
+        merchant_id: uuid.UUID,
+        delivery_id: uuid.UUID,
     ) -> WebhookDelivery | None:
         """Retry a failed or dead_lettered delivery."""
-        delivery = (await db.execute(
-            select(WebhookDelivery).where(
-                WebhookDelivery.id == delivery_id, WebhookDelivery.merchant_id == merchant_id)
-        )).scalar_one_or_none()
+        delivery = (
+            await db.execute(
+                select(WebhookDelivery).where(
+                    WebhookDelivery.id == delivery_id, WebhookDelivery.merchant_id == merchant_id
+                )
+            )
+        ).scalar_one_or_none()
         if delivery is None or delivery.status not in (WebhookStatus.failed, WebhookStatus.dead_lettered):
             return None
         delivery.status = WebhookStatus.pending

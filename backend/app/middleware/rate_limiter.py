@@ -62,9 +62,7 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
             self._merchant_limiter = MerchantRateLimiter(redis)
         return self._merchant_limiter
 
-    async def dispatch(
-        self, request: Request, call_next: RequestResponseEndpoint
-    ) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         # Skip exempt paths
         if request.url.path in EXEMPT_PATHS:
             return await call_next(request)
@@ -122,7 +120,9 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
                         status_code=429,
                         content={
                             "error": "merchant_rate_limit_exceeded",
-                            "message": f"Merchant rate limit exceeded. Retry after {int(m_result.retry_after or 60)} seconds.",
+                            "message": (
+                                f"Merchant rate limit exceeded. Retry after {int(m_result.retry_after or 60)} seconds."
+                            ),
                             "retry_after": int(m_result.retry_after or 60),
                         },
                         headers=m_result.headers(),

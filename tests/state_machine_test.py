@@ -23,14 +23,15 @@ from tests.conftest import (
 
 @pytest.mark.asyncio
 class TestValidTransitions:
-
     async def test_pending_to_paid(self, client: httpx.AsyncClient, test_merchant: dict):
         api_key = test_merchant["api_key_live"]
         inv = await create_invoice(client, api_key, amount_xmr="0.5")
         invoice_id = inv["id"]
         assert inv["status"] == "pending"
 
-        await insert_simulated_payment(invoice_id, amount_atomic=inv["amount_atomic"], status="confirmed", confirmations=10)
+        await insert_simulated_payment(
+            invoice_id, amount_atomic=inv["amount_atomic"], status="confirmed", confirmations=10
+        )
         await update_invoice_status_db(invoice_id, "paid")
 
         inv_after = await get_invoice(client, api_key, invoice_id)
@@ -108,7 +109,6 @@ class TestValidTransitions:
 
 @pytest.mark.asyncio
 class TestTerminalStates:
-
     async def test_paid_is_terminal(self, client: httpx.AsyncClient, test_merchant: dict):
         api_key = test_merchant["api_key_live"]
         inv = await create_invoice(client, api_key, amount_xmr="0.1")
@@ -161,7 +161,6 @@ class TestTerminalStates:
 
 @pytest.mark.asyncio
 class TestInvalidTransitions:
-
     async def test_cannot_cancel_with_payments(self, client: httpx.AsyncClient, test_merchant: dict):
         api_key = test_merchant["api_key_live"]
         inv = await create_invoice(client, api_key, amount_xmr="1.0")
@@ -184,7 +183,6 @@ class TestInvalidTransitions:
 
 @pytest.mark.asyncio
 class TestStatusFiltering:
-
     async def test_filter_by_each_status(self, client: httpx.AsyncClient, test_merchant: dict):
         api_key = test_merchant["api_key_live"]
 
@@ -196,7 +194,9 @@ class TestStatusFiltering:
                 await client.post(f"/v1/invoices/{inv['id']}/cancel", headers=auth_headers(api_key))
 
         for target in ["pending", "expired", "cancelled"]:
-            resp = await client.get("/v1/invoices", params={"status": target, "limit": 10}, headers=auth_headers(api_key))
+            resp = await client.get(
+                "/v1/invoices", params={"status": target, "limit": 10}, headers=auth_headers(api_key)
+            )
             assert resp.status_code == 200
             assert len(resp.json()["data"]) >= 1
             for inv in resp.json()["data"]:
@@ -204,6 +204,8 @@ class TestStatusFiltering:
             print(f"\u2713 Filter '{target}': {len(resp.json()['data'])} found")
 
     async def test_invalid_status_filter(self, client: httpx.AsyncClient, test_merchant: dict):
-        resp = await client.get("/v1/invoices", params={"status": "nonexistent"}, headers=auth_headers(test_merchant["api_key_live"]))
+        resp = await client.get(
+            "/v1/invoices", params={"status": "nonexistent"}, headers=auth_headers(test_merchant["api_key_live"])
+        )
         assert resp.status_code == 400
         print("\u2713 Invalid status \u2192 400")

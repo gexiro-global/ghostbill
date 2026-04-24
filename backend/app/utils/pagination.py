@@ -73,26 +73,18 @@ async def paginate_cursor(
     query = base_query
 
     if starting_after is not None:
-        cursor_row = (await db.execute(
-            select(order_column, model.id).where(model.id == starting_after)
-        )).first()
+        cursor_row = (await db.execute(select(order_column, model.id).where(model.id == starting_after))).first()
         if cursor_row is None:
             raise HTTPException(status_code=400, detail="Invalid cursor: starting_after not found.")
         cursor_ts, cursor_id = cursor_row
-        query = query.where(
-            tuple_(order_column, model.id) < tuple_(cursor_ts, cursor_id)
-        )
+        query = query.where(tuple_(order_column, model.id) < tuple_(cursor_ts, cursor_id))
 
     elif ending_before is not None:
-        cursor_row = (await db.execute(
-            select(order_column, model.id).where(model.id == ending_before)
-        )).first()
+        cursor_row = (await db.execute(select(order_column, model.id).where(model.id == ending_before))).first()
         if cursor_row is None:
             raise HTTPException(status_code=400, detail="Invalid cursor: ending_before not found.")
         cursor_ts, cursor_id = cursor_row
-        query = query.where(
-            tuple_(order_column, model.id) > tuple_(cursor_ts, cursor_id)
-        )
+        query = query.where(tuple_(order_column, model.id) > tuple_(cursor_ts, cursor_id))
         # Backward: sort ASC, then reverse
         query = query.order_by(order_column.asc(), model.id.asc())
         query = query.limit(limit + 1)

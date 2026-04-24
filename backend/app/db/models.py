@@ -66,25 +66,19 @@ class WebhookStatus(str, enum.Enum):
 class Merchant(Base):
     __tablename__ = "merchants"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     monero_address: Mapped[str] = mapped_column(String(128), nullable=False)
     view_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     webhook_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     webhook_secret: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    environment: Mapped[str] = mapped_column(
-        String(10), nullable=False, default="test"
-    )
+    environment: Mapped[str] = mapped_column(String(10), nullable=False, default="test")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     metadata_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # Phase 8B: prepay plan configuration
     prepay_plans: Mapped[list | None] = mapped_column(JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
@@ -98,12 +92,8 @@ class Merchant(Base):
 class Invoice(Base):
     __tablename__ = "invoices"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    merchant_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    merchant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False)
     amount_atomic: Mapped[int] = mapped_column(BigInteger, nullable=False)
     amount_xmr: Mapped[Decimal] = mapped_column(Numeric(18, 12), nullable=False)
     fiat_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
@@ -116,23 +106,15 @@ class Invoice(Base):
     )
     description: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     metadata_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    expires_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    paid_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
     merchant: Mapped["Merchant"] = relationship(back_populates="invoices")
-    address: Mapped["InvoiceAddress | None"] = relationship(
-        back_populates="invoice", uselist=False
-    )
+    address: Mapped["InvoiceAddress | None"] = relationship(back_populates="invoice", uselist=False)
     payments: Mapped[list["Payment"]] = relationship(back_populates="invoice")
 
     __table_args__ = (
@@ -144,35 +126,25 @@ class Invoice(Base):
 class InvoiceAddress(Base):
     __tablename__ = "invoice_addresses"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     invoice_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("invoices.id"), unique=True, nullable=False
     )
     address: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     address_index: Mapped[int] = mapped_column(Integer, nullable=False)
     account_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     invoice: Mapped["Invoice"] = relationship(back_populates="address")
 
-    __table_args__ = (
-        Index("ix_invoice_addresses_index", "account_index", "address_index"),
-    )
+    __table_args__ = (Index("ix_invoice_addresses_index", "account_index", "address_index"),)
 
 
 class Payment(Base):
     __tablename__ = "payments"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    invoice_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("invoices.id"), nullable=False
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    invoice_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("invoices.id"), nullable=False)
     tx_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     amount_atomic: Mapped[int] = mapped_column(BigInteger, nullable=False)
     amount_xmr: Mapped[Decimal] = mapped_column(Numeric(18, 12), nullable=False)
@@ -183,15 +155,9 @@ class Payment(Base):
     )
     confirmations: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     block_height: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    detected_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-    confirmed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     invoice: Mapped["Invoice"] = relationship(back_populates="payments")
 
@@ -204,39 +170,25 @@ class Payment(Base):
 class Customer(Base):
     __tablename__ = "customers"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    merchant_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    merchant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False)
     external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     metadata_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     merchant: Mapped["Merchant"] = relationship(back_populates="customers")
     subscriptions: Mapped[list["Subscription"]] = relationship(back_populates="customer")
 
-    __table_args__ = (
-        Index("ix_customers_merchant_external", "merchant_id", "external_id", unique=True),
-    )
+    __table_args__ = (Index("ix_customers_merchant_external", "merchant_id", "external_id", unique=True),)
 
 
 class Subscription(Base):
     __tablename__ = "subscriptions"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    merchant_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False
-    )
-    customer_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("customers.id"), nullable=False
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    merchant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False)
+    customer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("customers.id"), nullable=False)
     amount_atomic: Mapped[int] = mapped_column(BigInteger, nullable=False)
     amount_xmr: Mapped[Decimal] = mapped_column(Numeric(18, 12), nullable=False)
     interval_days: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -247,22 +199,14 @@ class Subscription(Base):
     )
     grace_days_soft: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
     grace_days_hard: Mapped[int] = mapped_column(Integer, default=7, nullable=False)
-    next_due_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    cancelled_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    next_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Phase 8A: Trial periods
     trial_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    trial_end_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    trial_end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     metadata_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # Phase 6A: billing anchor (deterministic renewal, no drift)
-    billing_anchor_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    billing_anchor_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     # Phase 6A: pending changes (applied at next renewal)
     pending_amount_atomic: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     pending_amount_xmr: Mapped[Decimal | None] = mapped_column(Numeric(18, 12), nullable=True)
@@ -270,53 +214,33 @@ class Subscription(Base):
     pending_grace_soft: Mapped[int | None] = mapped_column(Integer, nullable=True)
     pending_grace_hard: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Phase 8B: pre-payment tracking
-    prepaid_until: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    prepaid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     prepay_invoice_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("invoices.id"), nullable=True
     )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
     merchant: Mapped["Merchant"] = relationship(back_populates="subscriptions")
     customer: Mapped["Customer"] = relationship(back_populates="subscriptions")
-    payments: Mapped[list["SubscriptionPayment"]] = relationship(
-        back_populates="subscription"
-    )
-    renewal_events: Mapped[list["SubscriptionRenewalEvent"]] = relationship(
-        back_populates="subscription"
-    )
-    prepay_invoice: Mapped["Invoice | None"] = relationship(
-        foreign_keys=[prepay_invoice_id]
-    )
+    payments: Mapped[list["SubscriptionPayment"]] = relationship(back_populates="subscription")
+    renewal_events: Mapped[list["SubscriptionRenewalEvent"]] = relationship(back_populates="subscription")
+    prepay_invoice: Mapped["Invoice | None"] = relationship(foreign_keys=[prepay_invoice_id])
 
 
 class SubscriptionPayment(Base):
     __tablename__ = "subscription_payments"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     subscription_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("subscriptions.id"), nullable=False
     )
-    invoice_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("invoices.id"), nullable=False
-    )
-    period_start: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    period_end: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    invoice_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("invoices.id"), nullable=False)
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     subscription: Mapped["Subscription"] = relationship(back_populates="payments")
     invoice: Mapped["Invoice"] = relationship()
@@ -325,77 +249,50 @@ class SubscriptionPayment(Base):
 # Phase 6C: Renewal event audit trail
 class SubscriptionRenewalEvent(Base):
     """Audit log for every renewal attempt: success, skip, failure, grace."""
+
     __tablename__ = "subscription_renewal_events"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     subscription_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("subscriptions.id", ondelete="CASCADE"),
+        UUID(as_uuid=True),
+        ForeignKey("subscriptions.id", ondelete="CASCADE"),
         nullable=False,
     )
     result: Mapped[str] = mapped_column(String(30), nullable=False)
-    invoice_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("invoices.id"), nullable=True
-    )
+    invoice_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("invoices.id"), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     details: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    subscription: Mapped["Subscription"] = relationship(
-        back_populates="renewal_events"
-    )
+    subscription: Mapped["Subscription"] = relationship(back_populates="renewal_events")
 
-    __table_args__ = (
-        Index("idx_renewal_events_sub", "subscription_id",
-              text("created_at DESC")),
-    )
+    __table_args__ = (Index("idx_renewal_events_sub", "subscription_id", text("created_at DESC")),)
 
 
 class WalletShard(Base):
     __tablename__ = "wallet_shards"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    merchant_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    merchant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False)
     account_index: Mapped[int] = mapped_column(Integer, nullable=False)
     next_address_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    __table_args__ = (
-        Index("ix_wallet_shards_merchant_account", "merchant_id", "account_index", unique=True),
-    )
+    __table_args__ = (Index("ix_wallet_shards_merchant_account", "merchant_id", "account_index", unique=True),)
 
 
 class ApiKey(Base):
     __tablename__ = "api_keys"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    merchant_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    merchant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False)
     key_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     key_prefix: Mapped[str] = mapped_column(String(20), nullable=False)
     label: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    environment: Mapped[str] = mapped_column(
-        String(10), nullable=False, default="test"
-    )
+    environment: Mapped[str] = mapped_column(String(10), nullable=False, default="test")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    last_used_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     merchant: Mapped["Merchant"] = relationship(back_populates="api_keys")
 
@@ -408,15 +305,9 @@ class ApiKey(Base):
 class WebhookDelivery(Base):
     __tablename__ = "webhook_deliveries"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    merchant_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False
-    )
-    invoice_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("invoices.id"), nullable=True
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    merchant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False)
+    invoice_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("invoices.id"), nullable=True)
     event_type: Mapped[str] = mapped_column(String(64), nullable=False)
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
     url: Mapped[str] = mapped_column(String(2048), nullable=False)
@@ -427,17 +318,11 @@ class WebhookDelivery(Base):
     )
     attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     max_attempts: Mapped[int] = mapped_column(Integer, default=7, nullable=False)
-    last_attempt_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    next_retry_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     response_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
     response_body: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (
         Index(
@@ -451,62 +336,41 @@ class WebhookDelivery(Base):
 
 class WebhookDeadLetter(Base):
     """Phase 6B: Dead Letter Queue for webhook deliveries that exhausted retries."""
+
     __tablename__ = "webhook_dead_letters"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     delivery_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("webhook_deliveries.id"), nullable=False
     )
-    merchant_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False
-    )
+    merchant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False)
     event_type: Mapped[str] = mapped_column(String(50), nullable=False)
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    original_created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    original_created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     dead_lettered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    last_retry_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    last_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     resolved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    resolved_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    __table_args__ = (
-        Index("idx_dlq_merchant", "merchant_id", "resolved"),
-    )
+    __table_args__ = (Index("idx_dlq_merchant", "merchant_id", "resolved"),)
 
 
 class AuditLog(Base):
     __tablename__ = "audit_log"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    merchant_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=True
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    merchant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=True)
     action: Mapped[str] = mapped_column(String(128), nullable=False)
     entity_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    entity_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), nullable=True
-    )
+    entity_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     details: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (
         Index("ix_audit_log_merchant_created", "merchant_id", "created_at"),

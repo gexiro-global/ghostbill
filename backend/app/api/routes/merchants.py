@@ -15,14 +15,14 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import get_current_merchant, KEY_PREFIX_LENGTH
+from app.api.auth import KEY_PREFIX_LENGTH, get_current_merchant
+from app.core.audit import AuditEvent, audit_log_fire
+from app.core.encryption import encrypt_view_key
 from app.core.security import (
     generate_api_key,
     generate_webhook_secret,
     hash_api_key,
 )
-from app.core.encryption import encrypt_view_key
-from app.core.audit import AuditEvent, audit_log_fire
 from app.db.models import ApiKey, Merchant
 from app.db.session import get_db
 
@@ -171,9 +171,7 @@ async def register_merchant(
     """Register a new merchant. Returns live + test API keys (shown ONCE)."""
 
     # Check for duplicate address
-    existing = await db.execute(
-        select(Merchant).where(Merchant.monero_address == body.primary_address)
-    )
+    existing = await db.execute(select(Merchant).where(Merchant.monero_address == body.primary_address))
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

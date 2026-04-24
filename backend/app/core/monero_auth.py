@@ -18,7 +18,6 @@ import logging
 import os
 import re
 import time
-from typing import Any
 
 from redis.asyncio import Redis
 
@@ -43,6 +42,7 @@ MONERO_SIGNATURE_REGEX = re.compile(r"^SigV\d+[A-Za-z0-9+/=]+$")
 
 # ─── Address Validation ─────────────────────────────────────────────────────
 
+
 def validate_monero_address(address: str) -> bool:
     """Validate Monero primary address format.
 
@@ -64,6 +64,7 @@ def validate_signature_format(signature: str) -> bool:
 
 
 # ─── Nonce Management ───────────────────────────────────────────────────────
+
 
 async def generate_nonce(redis: Redis, address: str) -> str:
     """Generate a single-use nonce bound to a Monero address.
@@ -122,8 +123,10 @@ async def validate_nonce(redis: Redis, nonce: str, address: str) -> tuple[bool, 
     if stored_address != address:
         logger.warning(
             "Nonce address mismatch: expected %s...%s, got %s...%s",
-            stored_address[:8], stored_address[-6:],
-            address[:8], address[-6:],
+            stored_address[:8],
+            stored_address[-6:],
+            address[:8],
+            address[-6:],
         )
         return False, "Nonce not bound to this address"
 
@@ -132,9 +135,8 @@ async def validate_nonce(redis: Redis, nonce: str, address: str) -> tuple[bool, 
 
 # ─── Signature Verification ─────────────────────────────────────────────────
 
-async def verify_monero_signature(
-    address: str, data: str, signature: str
-) -> bool:
+
+async def verify_monero_signature(address: str, data: str, signature: str) -> bool:
     """Verify Monero signature via wallet-rpc.
 
     Calls the 'verify' RPC method on monero-wallet-rpc.
@@ -149,22 +151,27 @@ async def verify_monero_signature(
     """
     try:
         rpc = get_monero_rpc()
-        result = await rpc._call("verify", {
-            "data": data,
-            "address": address,
-            "signature": signature,
-        })
+        result = await rpc._call(
+            "verify",
+            {
+                "data": data,
+                "address": address,
+                "signature": signature,
+            },
+        )
         is_good = result.get("good", False)
 
         if is_good:
             logger.info(
                 "Signature verified for address %s...%s",
-                address[:8], address[-6:],
+                address[:8],
+                address[-6:],
             )
         else:
             logger.warning(
                 "Invalid signature for address %s...%s",
-                address[:8], address[-6:],
+                address[:8],
+                address[-6:],
             )
 
         return is_good
@@ -175,6 +182,7 @@ async def verify_monero_signature(
 
 
 # ─── Session Management ─────────────────────────────────────────────────────
+
 
 async def create_session(redis: Redis, merchant_id: str) -> str:
     """Create a session token after successful signature verification.

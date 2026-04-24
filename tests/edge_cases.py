@@ -28,7 +28,6 @@ from tests.conftest import (
 
 @pytest.mark.asyncio
 class TestDustRejection:
-
     async def test_dust_payment_below_threshold(self, client: httpx.AsyncClient, test_merchant: dict):
         api_key = test_merchant["api_key_live"]
         inv = await create_invoice(client, api_key, amount_xmr="0.5")
@@ -54,7 +53,6 @@ class TestDustRejection:
 
 @pytest.mark.asyncio
 class TestPartialPayment:
-
     async def test_three_partial_payments_to_paid(self, client: httpx.AsyncClient, test_merchant: dict):
         api_key = test_merchant["api_key_live"]
         inv = await create_invoice(client, api_key, amount_xmr="1.0")
@@ -85,7 +83,6 @@ class TestPartialPayment:
 
 @pytest.mark.asyncio
 class TestOverpayment:
-
     async def test_single_overpayment(self, client: httpx.AsyncClient, test_merchant: dict):
         api_key = test_merchant["api_key_live"]
         inv = await create_invoice(client, api_key, amount_xmr="0.5")
@@ -110,7 +107,6 @@ class TestOverpayment:
 
 @pytest.mark.asyncio
 class TestLatePaid:
-
     async def test_full_payment_after_expiry(self, client: httpx.AsyncClient, test_merchant: dict):
         api_key = test_merchant["api_key_live"]
         inv = await create_invoice(client, api_key, amount_xmr="0.5")
@@ -137,12 +133,13 @@ class TestLatePaid:
 
 @pytest.mark.asyncio
 class TestReorgOrphaned:
-
     async def test_payment_orphaned_reverts_status(self, client: httpx.AsyncClient, test_merchant: dict):
         api_key = test_merchant["api_key_live"]
         inv = await create_invoice(client, api_key, amount_xmr="0.5")
 
-        payment = await insert_simulated_payment(inv["id"], amount_atomic=500000000000, status="detected", confirmations=3)
+        payment = await insert_simulated_payment(
+            inv["id"], amount_atomic=500000000000, status="detected", confirmations=3
+        )
         await update_invoice_status_db(inv["id"], "partially_paid")
 
         await update_payment_status_db(payment["id"], "orphaned")
@@ -156,7 +153,9 @@ class TestReorgOrphaned:
         api_key = test_merchant["api_key_live"]
         inv = await create_invoice(client, api_key, amount_xmr="1.0")
 
-        p1 = await insert_simulated_payment(inv["id"], amount_atomic=600000000000, status="confirmed", confirmations=10)
+        _p1 = await insert_simulated_payment(
+            inv["id"], amount_atomic=600000000000, status="confirmed", confirmations=10
+        )
         p2 = await insert_simulated_payment(inv["id"], amount_atomic=400000000000, status="confirmed", confirmations=10)
         assert await sum_payments_for_invoice(inv["id"]) == 1000000000000
 
@@ -169,15 +168,20 @@ class TestReorgOrphaned:
 
 @pytest.mark.asyncio
 class TestCancelEdgeCases:
-
     async def test_cancel_nonexistent(self, client: httpx.AsyncClient, test_merchant: dict):
-        resp = await client.post(f"/v1/invoices/{uuid.uuid4()}/cancel", headers=auth_headers(test_merchant["api_key_live"]))
+        resp = await client.post(
+            f"/v1/invoices/{uuid.uuid4()}/cancel", headers=auth_headers(test_merchant["api_key_live"])
+        )
         assert resp.status_code == 404
         print("✓ Cancel nonexistent → 404")
 
-    async def test_cancel_other_merchants_invoice(self, client: httpx.AsyncClient, test_merchant: dict, fresh_merchant: dict):
+    async def test_cancel_other_merchants_invoice(
+        self, client: httpx.AsyncClient, test_merchant: dict, fresh_merchant: dict
+    ):
         inv = await create_invoice(client, test_merchant["api_key_live"], amount_xmr="0.1")
-        resp = await client.post(f"/v1/invoices/{inv['id']}/cancel", headers=auth_headers(fresh_merchant["api_key_live"]))
+        resp = await client.post(
+            f"/v1/invoices/{inv['id']}/cancel", headers=auth_headers(fresh_merchant["api_key_live"])
+        )
         assert resp.status_code == 404
         print("✓ Cannot cancel other's invoice")
 
@@ -192,7 +196,6 @@ class TestCancelEdgeCases:
 
 @pytest.mark.asyncio
 class TestAmountPrecision:
-
     async def test_very_small_amount(self, client: httpx.AsyncClient, test_merchant: dict):
         inv = await create_invoice(client, test_merchant["api_key_live"], amount_xmr="0.000000000001")
         assert inv["amount_atomic"] == 1
@@ -209,24 +212,29 @@ class TestAmountPrecision:
         print("✓ 12-decimal precision OK")
 
     async def test_zero_amount_rejected(self, client: httpx.AsyncClient, test_merchant: dict):
-        resp = await client.post("/v1/invoices", json={"amount_xmr": "0"}, headers=auth_headers(test_merchant["api_key_live"]))
+        resp = await client.post(
+            "/v1/invoices", json={"amount_xmr": "0"}, headers=auth_headers(test_merchant["api_key_live"])
+        )
         assert resp.status_code == 400
         print("✓ Zero → 400")
 
     async def test_negative_amount_rejected(self, client: httpx.AsyncClient, test_merchant: dict):
-        resp = await client.post("/v1/invoices", json={"amount_xmr": "-0.5"}, headers=auth_headers(test_merchant["api_key_live"]))
+        resp = await client.post(
+            "/v1/invoices", json={"amount_xmr": "-0.5"}, headers=auth_headers(test_merchant["api_key_live"])
+        )
         assert resp.status_code == 400
         print("✓ Negative → 400")
 
     async def test_invalid_amount_string(self, client: httpx.AsyncClient, test_merchant: dict):
-        resp = await client.post("/v1/invoices", json={"amount_xmr": "not_a_number"}, headers=auth_headers(test_merchant["api_key_live"]))
+        resp = await client.post(
+            "/v1/invoices", json={"amount_xmr": "not_a_number"}, headers=auth_headers(test_merchant["api_key_live"])
+        )
         assert resp.status_code == 400
         print("✓ Invalid string → 400")
 
 
 @pytest.mark.asyncio
 class TestExpirationBoundaries:
-
     async def test_min_expiration(self, client: httpx.AsyncClient, test_merchant: dict):
         inv = await create_invoice(client, test_merchant["api_key_live"], amount_xmr="0.1", expires_in=600)
         assert inv["status"] == "pending"
@@ -238,19 +246,26 @@ class TestExpirationBoundaries:
         print("✓ Max (86400s) OK")
 
     async def test_below_min_rejected(self, client: httpx.AsyncClient, test_merchant: dict):
-        resp = await client.post("/v1/invoices", json={"amount_xmr": "0.1", "expires_in": 599}, headers=auth_headers(test_merchant["api_key_live"]))
+        resp = await client.post(
+            "/v1/invoices",
+            json={"amount_xmr": "0.1", "expires_in": 599},
+            headers=auth_headers(test_merchant["api_key_live"]),
+        )
         assert resp.status_code in (400, 422)
         print("✓ Below min (599s) rejected")
 
     async def test_above_max_rejected(self, client: httpx.AsyncClient, test_merchant: dict):
-        resp = await client.post("/v1/invoices", json={"amount_xmr": "0.1", "expires_in": 86401}, headers=auth_headers(test_merchant["api_key_live"]))
+        resp = await client.post(
+            "/v1/invoices",
+            json={"amount_xmr": "0.1", "expires_in": 86401},
+            headers=auth_headers(test_merchant["api_key_live"]),
+        )
         assert resp.status_code in (400, 422)
         print("✓ Above max (86401s) rejected")
 
 
 @pytest.mark.asyncio
 class TestAuthEdgeCases:
-
     async def test_no_auth_header(self, client: httpx.AsyncClient):
         assert (await client.get("/v1/invoices")).status_code == 401
         print("✓ No auth → 401")

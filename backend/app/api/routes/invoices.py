@@ -103,9 +103,14 @@ async def create_invoice(
     fiat_rate = await _get_fiat_rate(redis)
     try:
         invoice = await invoice_service.create_invoice(
-            db=db, merchant=merchant, amount_xmr_raw=body.amount_xmr,
-            description=body.description, expires_in=body.expires_in,
-            metadata=body.metadata, fiat_rate=fiat_rate, fiat_currency="USD",
+            db=db,
+            merchant=merchant,
+            amount_xmr_raw=body.amount_xmr,
+            description=body.description,
+            expires_in=body.expires_in,
+            metadata=body.metadata,
+            fiat_rate=fiat_rate,
+            fiat_currency="USD",
         )
         await db.commit()
     except InvoiceValidationError as exc:
@@ -140,8 +145,12 @@ async def list_invoices(
         base_query = base_query.where(Invoice.status == status_filter)
 
     result = await paginate_cursor(
-        db=db, base_query=base_query, model=Invoice,
-        limit=limit, starting_after=starting_after, ending_before=ending_before,
+        db=db,
+        base_query=base_query,
+        model=Invoice,
+        limit=limit,
+        starting_after=starting_after,
+        ending_before=ending_before,
     )
 
     # Load address for each invoice

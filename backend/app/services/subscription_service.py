@@ -30,11 +30,11 @@ from app.db.models import (
 from app.services.invoice_service import WalletUnavailableError
 from app.services.monero_rpc import xmr_to_atomic
 from app.services.subscription_exceptions import (
+    TERMINAL_STATUSES,
     SkipRenewalError,
     SubscriptionNotFoundError,
     SubscriptionStateError,
     SubscriptionValidationError,
-    TERMINAL_STATUSES,
 )
 from app.services.subscription_renewal import _create_renewal_invoice
 
@@ -47,16 +47,22 @@ class SubscriptionService:
     # ── Create ───────────────────────────────────────────────────────
 
     async def create_subscription(
-        self, db: AsyncSession, merchant: Merchant,
-        customer_id: uuid.UUID, amount_xmr_raw: str | float | Decimal,
-        interval_days: int, grace_days_soft: int = 3, grace_days_hard: int = 7,
-        start_at: datetime | None = None, trial_days: int | None = None,
+        self,
+        db: AsyncSession,
+        merchant: Merchant,
+        customer_id: uuid.UUID,
+        amount_xmr_raw: str | float | Decimal,
+        interval_days: int,
+        grace_days_soft: int = 3,
+        grace_days_hard: int = 7,
+        start_at: datetime | None = None,
+        trial_days: int | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Subscription:
         """Create new subscription and optionally first invoice."""
-        cust = (await db.execute(
-            select(Customer).where(Customer.id == customer_id, Customer.merchant_id == merchant.id)
-        )).scalar_one_or_none()
+        cust = (
+            await db.execute(select(Customer).where(Customer.id == customer_id, Customer.merchant_id == merchant.id))
+        ).scalar_one_or_none()
         if cust is None:
             raise SubscriptionNotFoundError(f"Customer {customer_id} not found.")
 
@@ -86,20 +92,31 @@ class SubscriptionService:
             trial_end = None
 
         sub = Subscription(
-            id=uuid.uuid4(), merchant_id=merchant.id, customer_id=customer_id,
-            amount_xmr=amount_xmr, amount_atomic=xmr_to_atomic(amount_xmr),
-            interval_days=interval_days, status=initial_status,
-            grace_days_soft=grace_days_soft, grace_days_hard=grace_days_hard,
+            id=uuid.uuid4(),
+            merchant_id=merchant.id,
+            customer_id=customer_id,
+            amount_xmr=amount_xmr,
+            amount_atomic=xmr_to_atomic(amount_xmr),
+            interval_days=interval_days,
+            status=initial_status,
+            grace_days_soft=grace_days_soft,
+            grace_days_hard=grace_days_hard,
             next_due_at=trial_end if is_trial else next_due,
-            metadata_json=metadata, billing_anchor_at=next_due,
+            metadata_json=metadata,
+            billing_anchor_at=next_due,
             trial_days=trial_days if is_trial else None,
             trial_end_at=trial_end,
         )
         db.add(sub)
         await db.flush()
 
-        logger.info("Subscription created: %s, merchant=%s, amount=%s XMR, trial=%s",
-                    sub.id, merchant.id, amount_xmr, trial_days if is_trial else "none")
+        logger.info(
+            "Subscription created: %s, merchant=%s, amount=%s XMR, trial=%s",
+            sub.id,
+            merchant.id,
+            amount_xmr,
+            trial_days if is_trial else "none",
+        )
 
         if is_trial:
             await self._fire_lifecycle_event(db, "subscription.trial_started", sub)
@@ -114,19 +131,21 @@ class SubscriptionService:
     # ── Get / List ────────────────────────────────────────────────────
 
     async def get_subscription(
-        self, db: AsyncSession, merchant_id: uuid.UUID, subscription_id: uuid.UUID,
+        self,
+        db: AsyncSession,
+        merchant_id: uuid.UUID,
+        subscription_id: uuid.UUID,
     ) -> dict:
         """Get subscription with customer info and payment history."""
-        sub = (await db.execute(
-            select(Subscription).where(
-                Subscription.id == subscription_id, Subscription.merchant_id == merchant_id)
-        )).scalar_one_or_none()
+        sub = (
+            await db.execute(
+                select(Subscription).where(Subscription.id == subscription_id, Subscription.merchant_id == merchant_id)
+            )
+        ).scalar_one_or_none()
         if sub is None:
             raise SubscriptionNotFoundError(f"Subscription {subscription_id} not found.")
 
-        customer = (await db.execute(
-            select(Customer).where(Customer.id == sub.customer_id)
-        )).scalar_one_or_none()
+        customer = (await db.execute(select(Customer).where(Customer.id == sub.customer_id))).scalar_one_or_none()
 
         sp_stmt = (
             select(SubscriptionPayment, Invoice.status, Invoice.paid_at)
@@ -136,23 +155,33 @@ class SubscriptionService:
         )
         payments = []
         for sp, inv_status, inv_paid_at in (await db.execute(sp_stmt)).all():
-            payments.append({
-                "id": str(sp.id), "period_start": sp.period_start.isoformat(),
-                "period_end": sp.period_end.isoformat(), "invoice_id": str(sp.invoice_id),
-                "invoice_status": inv_status.value,
-                "paid_at": inv_paid_at.isoformat() if inv_paid_at else None,
-            })
+            payments.append(
+                {
+                    "id": str(sp.id),
+                    "period_start": sp.period_start.isoformat(),
+                    "period_end": sp.period_end.isoformat(),
+                    "invoice_id": str(sp.invoice_id),
+                    "invoice_status": inv_status.value,
+                    "paid_at": inv_paid_at.isoformat() if inv_paid_at else None,
+                }
+            )
 
-        return {"subscription": sub,
-                "customer": {"id": str(customer.id), "external_id": customer.external_id,
-                             "email": customer.email} if customer else None,
-                "payments": payments}
+        return {
+            "subscription": sub,
+            "customer": {"id": str(customer.id), "external_id": customer.external_id, "email": customer.email}
+            if customer
+            else None,
+            "payments": payments,
+        }
 
     async def list_subscriptions(
-        self, db: AsyncSession, merchant_id: uuid.UUID,
+        self,
+        db: AsyncSession,
+        merchant_id: uuid.UUID,
         status: SubscriptionStatus | None = None,
         customer_id: uuid.UUID | None = None,
-        limit: int = 50, offset: int = 0,
+        limit: int = 50,
+        offset: int = 0,
     ) -> tuple[list[Subscription], int]:
         """List subscriptions with optional filters."""
         limit, offset = max(1, min(limit, 100)), max(0, offset)
@@ -163,21 +192,32 @@ class SubscriptionService:
             where.append(Subscription.customer_id == customer_id)
 
         total = (await db.execute(select(func.count(Subscription.id)).where(*where))).scalar_one()
-        subs = list((await db.execute(
-            select(Subscription).where(*where)
-            .order_by(Subscription.created_at.desc()).limit(limit).offset(offset)
-        )).scalars().all())
+        subs = list(
+            (
+                await db.execute(
+                    select(Subscription)
+                    .where(*where)
+                    .order_by(Subscription.created_at.desc())
+                    .limit(limit)
+                    .offset(offset)
+                )
+            )
+            .scalars()
+            .all()
+        )
         return subs, total
 
     # ── State Transitions (with webhook events) ───────────────────
 
     async def pause_subscription(
-        self, db: AsyncSession, merchant_id: uuid.UUID, subscription_id: uuid.UUID,
+        self,
+        db: AsyncSession,
+        merchant_id: uuid.UUID,
+        subscription_id: uuid.UUID,
     ) -> Subscription:
         sub = await self._get_for_update(db, merchant_id, subscription_id)
         if sub.status != SubscriptionStatus.active:
-            raise SubscriptionStateError(
-                f"Cannot pause subscription with status '{sub.status.value}'.")
+            raise SubscriptionStateError(f"Cannot pause subscription with status '{sub.status.value}'.")
         sub.status = SubscriptionStatus.paused
         await db.flush()
         # Phase 6B: fire subscription.paused event
@@ -185,12 +225,14 @@ class SubscriptionService:
         return sub
 
     async def resume_subscription(
-        self, db: AsyncSession, merchant_id: uuid.UUID, subscription_id: uuid.UUID,
+        self,
+        db: AsyncSession,
+        merchant_id: uuid.UUID,
+        subscription_id: uuid.UUID,
     ) -> Subscription:
         sub = await self._get_for_update(db, merchant_id, subscription_id)
         if sub.status != SubscriptionStatus.paused:
-            raise SubscriptionStateError(
-                f"Cannot resume subscription with status '{sub.status.value}'.")
+            raise SubscriptionStateError(f"Cannot resume subscription with status '{sub.status.value}'.")
         now = datetime.now(timezone.utc)
         if sub.next_due_at and sub.next_due_at < now:
             sub.next_due_at = now
@@ -201,9 +243,13 @@ class SubscriptionService:
         return sub
 
     async def cancel_subscription(
-        self, db: AsyncSession, merchant_id: uuid.UUID, subscription_id: uuid.UUID,
+        self,
+        db: AsyncSession,
+        merchant_id: uuid.UUID,
+        subscription_id: uuid.UUID,
     ) -> Subscription:
         from app.services.invoice_service import invoice_service as inv_svc
+
         sub = await self._get_for_update(db, merchant_id, subscription_id)
         if sub.status in TERMINAL_STATUSES:
             raise SubscriptionStateError(f"Subscription is already {sub.status.value}.")
@@ -212,8 +258,7 @@ class SubscriptionService:
         sp_stmt = (
             select(SubscriptionPayment)
             .join(Invoice, SubscriptionPayment.invoice_id == Invoice.id)
-            .where(SubscriptionPayment.subscription_id == sub.id,
-                   Invoice.status == InvoiceStatus.pending)
+            .where(SubscriptionPayment.subscription_id == sub.id, Invoice.status == InvoiceStatus.pending)
         )
         for sp in (await db.execute(sp_stmt)).scalars().all():
             try:
@@ -226,7 +271,10 @@ class SubscriptionService:
     # ── Helpers ─────────────────────────────────────────────────────
 
     async def _get_for_update(
-        self, db: AsyncSession, merchant_id: uuid.UUID, subscription_id: uuid.UUID,
+        self,
+        db: AsyncSession,
+        merchant_id: uuid.UUID,
+        subscription_id: uuid.UUID,
     ) -> Subscription:
         stmt = (
             select(Subscription)
@@ -239,14 +287,19 @@ class SubscriptionService:
         return sub
 
     async def _fire_lifecycle_event(
-        self, db: AsyncSession, event_type: str, sub: Subscription,
+        self,
+        db: AsyncSession,
+        event_type: str,
+        sub: Subscription,
         reason: str | None = None,
     ) -> None:
         """Fire a subscription lifecycle webhook event."""
         try:
             from app.services.webhook_service import webhook_service
+
             await webhook_service.dispatch_subscription_event(
-                db=db, event_type=event_type, subscription=sub, reason=reason)
+                db=db, event_type=event_type, subscription=sub, reason=reason
+            )
         except Exception as exc:
             logger.warning("Failed to fire %s for sub %s: %s", event_type, sub.id, exc)
 

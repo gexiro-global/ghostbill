@@ -8,9 +8,7 @@ Usage:
     cd /root/ghostbill && python3 -m pytest tests/test_subscriptions.py -v
 """
 
-import asyncio
 import uuid
-from datetime import datetime, timezone
 
 import httpx
 import pytest
@@ -18,9 +16,6 @@ import pytest
 from tests.conftest import (
     auth_headers,
     db_execute,
-    db_fetchrow,
-    db_fetch,
-    update_invoice_status_db,
 )
 
 BASE_URL = "http://127.0.0.1:8013"
@@ -36,8 +31,7 @@ async def _create_customer(client, api_key, ext_id=None):
     return resp.json()
 
 
-async def _create_subscription(client, api_key, customer_id, amount="0.5",
-                                interval=30, start_at=None):
+async def _create_subscription(client, api_key, customer_id, amount="0.5", interval=30, start_at=None):
     payload = {
         "customer_id": customer_id,
         "amount_xmr": amount,
@@ -65,7 +59,6 @@ async def _trigger_renewal(subscription_id: str | None = None):
 
 @pytest.mark.asyncio
 class TestSubscriptionCreate:
-
     async def test_create_basic(self, client, test_merchant):
         key = test_merchant["api_key_live"]
         cust = await _create_customer(client, key)
@@ -78,8 +71,10 @@ class TestSubscriptionCreate:
         key = test_merchant["api_key_live"]
         cust = await _create_customer(client, key)
         payload = {
-            "customer_id": cust["id"], "amount_xmr": "1.0",
-            "interval_days": 30, "start_at": "2099-01-01T00:00:00Z",
+            "customer_id": cust["id"],
+            "amount_xmr": "1.0",
+            "interval_days": 30,
+            "start_at": "2099-01-01T00:00:00Z",
         }
         resp = await client.post("/v1/subscriptions", json=payload, headers=auth_headers(key))
         assert resp.status_code == 201
@@ -88,7 +83,9 @@ class TestSubscriptionCreate:
     async def test_create_bad_customer(self, client, test_merchant):
         key = test_merchant["api_key_live"]
         payload = {
-            "customer_id": str(uuid.uuid4()), "amount_xmr": "0.5", "interval_days": 30,
+            "customer_id": str(uuid.uuid4()),
+            "amount_xmr": "0.5",
+            "interval_days": 30,
         }
         resp = await client.post("/v1/subscriptions", json=payload, headers=auth_headers(key))
         assert resp.status_code == 404
@@ -104,8 +101,11 @@ class TestSubscriptionCreate:
         key = test_merchant["api_key_live"]
         cust = await _create_customer(client, key)
         payload = {
-            "customer_id": cust["id"], "amount_xmr": "0.5",
-            "interval_days": 30, "grace_days_soft": 10, "grace_days_hard": 5,
+            "customer_id": cust["id"],
+            "amount_xmr": "0.5",
+            "interval_days": 30,
+            "grace_days_soft": 10,
+            "grace_days_hard": 5,
         }
         resp = await client.post("/v1/subscriptions", json=payload, headers=auth_headers(key))
         assert resp.status_code == 400
@@ -116,7 +116,6 @@ class TestSubscriptionCreate:
 
 @pytest.mark.asyncio
 class TestSubscriptionActions:
-
     async def test_pause_active(self, client, test_merchant):
         key = test_merchant["api_key_live"]
         cust = await _create_customer(client, key)
@@ -173,14 +172,14 @@ class TestSubscriptionActions:
 
 @pytest.mark.asyncio
 class TestSubscriptionPatch:
-
     async def test_patch_amount(self, client, test_merchant):
         key = test_merchant["api_key_live"]
         cust = await _create_customer(client, key)
         sub = await _create_subscription(client, key, cust["id"], amount="0.5")
         resp = await client.patch(
             f"/v1/subscriptions/{sub['id']}",
-            json={"amount_xmr": "1.0"}, headers=auth_headers(key),
+            json={"amount_xmr": "1.0"},
+            headers=auth_headers(key),
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -194,7 +193,8 @@ class TestSubscriptionPatch:
         sub = await _create_subscription(client, key, cust["id"])
         resp = await client.patch(
             f"/v1/subscriptions/{sub['id']}",
-            json={"interval_days": 14}, headers=auth_headers(key),
+            json={"interval_days": 14},
+            headers=auth_headers(key),
         )
         assert resp.status_code == 200
         assert resp.json()["pending_changes"]["interval_days"] == 14
@@ -205,7 +205,8 @@ class TestSubscriptionPatch:
         sub = await _create_subscription(client, key, cust["id"])
         resp = await client.patch(
             f"/v1/subscriptions/{sub['id']}",
-            json={"metadata": {"plan": "pro"}}, headers=auth_headers(key),
+            json={"metadata": {"plan": "pro"}},
+            headers=auth_headers(key),
         )
         assert resp.status_code == 200
         assert resp.json()["metadata"]["plan"] == "pro"
@@ -216,11 +217,13 @@ class TestSubscriptionPatch:
         sub = await _create_subscription(client, key, cust["id"])
         await client.patch(
             f"/v1/subscriptions/{sub['id']}",
-            json={"amount_xmr": "2.0"}, headers=auth_headers(key),
+            json={"amount_xmr": "2.0"},
+            headers=auth_headers(key),
         )
         resp = await client.patch(
             f"/v1/subscriptions/{sub['id']}",
-            json={"amount_xmr": None}, headers=auth_headers(key),
+            json={"amount_xmr": None},
+            headers=auth_headers(key),
         )
         assert resp.status_code == 200
         assert resp.json()["has_pending_changes"] is False
@@ -232,7 +235,8 @@ class TestSubscriptionPatch:
         await client.post(f"/v1/subscriptions/{sub['id']}/cancel", headers=auth_headers(key))
         resp = await client.patch(
             f"/v1/subscriptions/{sub['id']}",
-            json={"amount_xmr": "1.0"}, headers=auth_headers(key),
+            json={"amount_xmr": "1.0"},
+            headers=auth_headers(key),
         )
         assert resp.status_code == 409
 
@@ -243,7 +247,8 @@ class TestSubscriptionPatch:
         await client.post(f"/v1/subscriptions/{sub['id']}/pause", headers=auth_headers(key))
         resp = await client.patch(
             f"/v1/subscriptions/{sub['id']}",
-            json={"amount_xmr": "1.0"}, headers=auth_headers(key),
+            json={"amount_xmr": "1.0"},
+            headers=auth_headers(key),
         )
         assert resp.status_code == 200
         assert resp.json()["has_pending_changes"] is True
@@ -254,7 +259,8 @@ class TestSubscriptionPatch:
         sub = await _create_subscription(client, key, cust["id"])
         resp = await client.patch(
             f"/v1/subscriptions/{sub['id']}",
-            json={"amount_xmr": "-1"}, headers=auth_headers(key),
+            json={"amount_xmr": "-1"},
+            headers=auth_headers(key),
         )
         assert resp.status_code == 400
 
@@ -264,7 +270,6 @@ class TestSubscriptionPatch:
 
 @pytest.mark.asyncio
 class TestSubscriptionQuery:
-
     async def test_list_subscriptions(self, client, test_merchant):
         key = test_merchant["api_key_live"]
         resp = await client.get("/v1/subscriptions", headers=auth_headers(key))
@@ -301,14 +306,17 @@ class TestSubscriptionQuery:
 
 @pytest.mark.asyncio
 class TestSubscriptionRenewal:
-
     async def test_trigger_renewal_single(self, client, test_merchant):
         """Create sub (future start) \u2192 set next_due to past \u2192 trigger \u2192 renewed=1."""
         key = test_merchant["api_key_live"]
         cust = await _create_customer(client, key)
         # Future start = no immediate first invoice
         sub = await _create_subscription(
-            client, key, cust["id"], amount="0.1", interval=1,
+            client,
+            key,
+            cust["id"],
+            amount="0.1",
+            interval=1,
             start_at="2099-01-01T00:00:00Z",
         )
         assert sub["payments"] == [], "Should have no payments with future start"
@@ -331,14 +339,19 @@ class TestSubscriptionRenewal:
         cust = await _create_customer(client, key)
         # Future start = no first invoice
         sub = await _create_subscription(
-            client, key, cust["id"], amount="0.5", interval=1,
+            client,
+            key,
+            cust["id"],
+            amount="0.5",
+            interval=1,
             start_at="2099-01-01T00:00:00Z",
         )
 
         # PATCH: set pending amount
         await client.patch(
             f"/v1/subscriptions/{sub['id']}",
-            json={"amount_xmr": "1.0"}, headers=auth_headers(key),
+            json={"amount_xmr": "1.0"},
+            headers=auth_headers(key),
         )
 
         # Verify current still 0.5, pending set

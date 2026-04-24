@@ -18,39 +18,35 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.config import settings
-from app.dependencies import close_redis, get_redis
-from app.db.session import engine, async_session
-
-from app.services.monero_rpc import close_monero_rpc
-from app.core.log_redactor import setup_log_redaction
-from app.core.audit import ensure_audit_table
-from app.core.encryption import get_encryption
-
-from app.middleware.rate_limiter import RateLimiterMiddleware
-from app.middleware.security_headers import SecurityHeadersMiddleware
-from app.middleware.timing_jitter import TimingJitterMiddleware
-
-from app.api.routes.merchants import router as merchants_router
-from app.api.routes.price import router as price_router
-from app.api.routes.invoices import router as invoices_router
-from app.api.routes.payments import router as payments_router
-from app.api.routes.webhooks import router as webhooks_router
+from app.api.routes.admin import router as admin_router
+from app.api.routes.analytics import router as analytics_router
 from app.api.routes.api_keys import router as api_keys_router
 from app.api.routes.auth_signature import router as auth_signature_router
 from app.api.routes.customers import router as customers_router
-from app.api.routes.subscriptions import router as subscriptions_router
-from app.api.routes.analytics import router as analytics_router
-from app.api.routes.admin import router as admin_router
+from app.api.routes.invoices import router as invoices_router
+from app.api.routes.merchants import router as merchants_router
+from app.api.routes.payments import router as payments_router
+from app.api.routes.price import router as price_router
 from app.api.routes.public_invoice import api_router as public_api_router
 from app.api.routes.public_invoice import pay_router as pay_page_router
-
-from app.tasks.price_updater import price_updater_loop
-from app.tasks.invoice_expirer import run_invoice_expirer
-from app.tasks.detection_engine import detection_engine_loop
-from app.tasks.webhook_worker import webhook_worker_loop
+from app.api.routes.subscriptions import router as subscriptions_router
+from app.api.routes.webhooks import router as webhooks_router
+from app.config import settings
+from app.core.audit import ensure_audit_table
+from app.core.encryption import get_encryption
+from app.core.log_redactor import setup_log_redaction
+from app.db.session import async_session, engine
+from app.dependencies import close_redis, get_redis
+from app.middleware.rate_limiter import RateLimiterMiddleware
+from app.middleware.security_headers import SecurityHeadersMiddleware
+from app.middleware.timing_jitter import TimingJitterMiddleware
+from app.services.monero_rpc import close_monero_rpc
 from app.tasks.data_retention import data_retention_loop
+from app.tasks.detection_engine import detection_engine_loop
+from app.tasks.invoice_expirer import run_invoice_expirer
+from app.tasks.price_updater import price_updater_loop
 from app.tasks.subscription_renewer import subscription_renewer_loop
+from app.tasks.webhook_worker import webhook_worker_loop
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +95,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title=settings.app_name, version=settings.app_version,
+    title=settings.app_name,
+    version=settings.app_version,
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
     lifespan=lifespan,
@@ -112,8 +109,11 @@ if settings.debug:
     _cors_origins.extend(["http://localhost:3013", "http://127.0.0.1:3013"])
 if _cors_origins:
     app.add_middleware(
-        CORSMiddleware, allow_origins=_cors_origins,
-        allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
 app.add_middleware(TimingJitterMiddleware)
@@ -121,9 +121,16 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RateLimiterMiddleware)
 
 for r in [
-    merchants_router, price_router, invoices_router, payments_router,
-    webhooks_router, api_keys_router, auth_signature_router,
-    customers_router, subscriptions_router, analytics_router,
+    merchants_router,
+    price_router,
+    invoices_router,
+    payments_router,
+    webhooks_router,
+    api_keys_router,
+    auth_signature_router,
+    customers_router,
+    subscriptions_router,
+    analytics_router,
     admin_router,
 ]:
     app.include_router(r, prefix=settings.api_prefix)
@@ -138,12 +145,14 @@ async def health_check():
 
     detection = await get_health_metrics()
 
-    return JSONResponse(content={
-        "status": "healthy",
-        "app": settings.app_name,
-        "version": settings.app_version,
-        "detection": detection,
-    })
+    return JSONResponse(
+        content={
+            "status": "healthy",
+            "app": settings.app_name,
+            "version": settings.app_version,
+            "detection": detection,
+        }
+    )
 
 
 @app.post("/v1/internal/trigger-renewal")
@@ -155,12 +164,12 @@ async def trigger_renewal(request: Request, subscription_id: str | None = None):
 
     if subscription_id:
         from sqlalchemy import select
-        from app.db.models import Subscription, SubscriptionStatus
+
+        from app.db.models import Merchant, Subscription, SubscriptionStatus
         from app.db.session import async_session as get_session
-        from app.services.subscription_renewal import _create_renewal_invoice
-        from app.services.subscription_exceptions import SkipRenewalError
         from app.services.invoice_service import WalletUnavailableError
-        from app.db.models import Merchant
+        from app.services.subscription_exceptions import SkipRenewalError
+        from app.services.subscription_renewal import _create_renewal_invoice
 
         sub_uuid = uuid.UUID(subscription_id)
         async with get_session() as db:
@@ -173,9 +182,7 @@ async def trigger_renewal(request: Request, subscription_id: str | None = None):
             if sub is None:
                 raise HTTPException(status_code=404, detail="Subscription not found or not active.")
 
-            merchant = (await db.execute(
-                select(Merchant).where(Merchant.id == sub.merchant_id)
-            )).scalar_one_or_none()
+            merchant = (await db.execute(select(Merchant).where(Merchant.id == sub.merchant_id))).scalar_one_or_none()
             if merchant is None:
                 return {"renewed": 0, "skipped": 1, "failed": 0, "reason": "merchant not found"}
 
@@ -190,4 +197,5 @@ async def trigger_renewal(request: Request, subscription_id: str | None = None):
                 return {"renewed": 0, "skipped": 0, "failed": 1, "error": str(exc)}
     else:
         from app.tasks.subscription_renewer import run_sweep
+
         return await run_sweep()

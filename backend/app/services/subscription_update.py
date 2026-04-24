@@ -9,7 +9,6 @@ Phase 6A: PATCH semantics with pending_* fields.
 """
 
 import logging
-import uuid
 from decimal import Decimal, InvalidOperation
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,10 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Subscription
 from app.services.monero_rpc import xmr_to_atomic
 from app.services.subscription_exceptions import (
-    SubscriptionNotFoundError,
+    TERMINAL_STATUSES,
     SubscriptionStateError,
     SubscriptionValidationError,
-    TERMINAL_STATUSES,
 )
 
 logger = logging.getLogger(__name__)
@@ -29,9 +27,12 @@ _UNSET = object()
 
 
 async def update_subscription(
-    db: AsyncSession, sub: Subscription,
-    amount_xmr=_UNSET, interval_days=_UNSET,
-    grace_days_soft=_UNSET, grace_days_hard=_UNSET,
+    db: AsyncSession,
+    sub: Subscription,
+    amount_xmr=_UNSET,
+    interval_days=_UNSET,
+    grace_days_soft=_UNSET,
+    grace_days_hard=_UNSET,
     metadata=_UNSET,
 ) -> Subscription:
     """Update subscription with pending changes."""

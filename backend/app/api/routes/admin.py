@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_merchant
@@ -144,10 +144,7 @@ async def admin_check(
     merchant: Merchant = Depends(get_current_merchant),
 ):
     """Check if current merchant has admin access. No 403 — just returns bool."""
-    is_admin = (
-        bool(settings.admin_merchant_id)
-        and str(merchant.id) == settings.admin_merchant_id
-    )
+    is_admin = bool(settings.admin_merchant_id) and str(merchant.id) == settings.admin_merchant_id
     return AdminMeResponse(is_admin=is_admin, merchant_id=str(merchant.id))
 
 
@@ -162,18 +159,21 @@ async def list_all_merchants(
 
     result = []
     for m in merchants:
-        inv_count = (await db.execute(
-            select(func.count(Invoice.id)).where(Invoice.merchant_id == m.id)
-        )).scalar_one()
-        sub_count = (await db.execute(
-            select(func.count(Subscription.id)).where(Subscription.merchant_id == m.id)
-        )).scalar_one()
-        result.append(AdminMerchantInfo(
-            id=str(m.id), name=m.name, email=m.email,
-            is_active=m.is_active, invoice_count=inv_count,
-            subscription_count=sub_count,
-            created_at=m.created_at.isoformat(),
-        ))
+        inv_count = (await db.execute(select(func.count(Invoice.id)).where(Invoice.merchant_id == m.id))).scalar_one()
+        sub_count = (
+            await db.execute(select(func.count(Subscription.id)).where(Subscription.merchant_id == m.id))
+        ).scalar_one()
+        result.append(
+            AdminMerchantInfo(
+                id=str(m.id),
+                name=m.name,
+                email=m.email,
+                is_active=m.is_active,
+                invoice_count=inv_count,
+                subscription_count=sub_count,
+                created_at=m.created_at.isoformat(),
+            )
+        )
 
     return AdminMerchantsResponse(merchants=result, total=len(result))
 
@@ -185,9 +185,7 @@ async def toggle_merchant_active(
     db: AsyncSession = Depends(get_db),
 ):
     """Toggle merchant active/inactive status."""
-    target = (await db.execute(
-        select(Merchant).where(Merchant.id == merchant_id)
-    )).scalar_one_or_none()
+    target = (await db.execute(select(Merchant).where(Merchant.id == merchant_id))).scalar_one_or_none()
     if target is None:
         raise HTTPException(status_code=404, detail="Merchant not found.")
     if str(merchant_id) == settings.admin_merchant_id:
@@ -209,57 +207,65 @@ async def global_stats(
 ):
     """Global instance statistics."""
     merchants_total = (await db.execute(select(func.count(Merchant.id)))).scalar_one()
-    merchants_active = (await db.execute(
-        select(func.count(Merchant.id)).where(Merchant.is_active == True)
-    )).scalar_one()
+    merchants_active = (
+        await db.execute(select(func.count(Merchant.id)).where(Merchant.is_active == True))
+    ).scalar_one()
 
     invoices_total = (await db.execute(select(func.count(Invoice.id)))).scalar_one()
-    invoices_paid = (await db.execute(
-        select(func.count(Invoice.id)).where(Invoice.status == InvoiceStatus.paid)
-    )).scalar_one()
-    invoices_pending = (await db.execute(
-        select(func.count(Invoice.id)).where(Invoice.status == InvoiceStatus.pending)
-    )).scalar_one()
-    invoices_expired = (await db.execute(
-        select(func.count(Invoice.id)).where(Invoice.status == InvoiceStatus.expired)
-    )).scalar_one()
+    invoices_paid = (
+        await db.execute(select(func.count(Invoice.id)).where(Invoice.status == InvoiceStatus.paid))
+    ).scalar_one()
+    invoices_pending = (
+        await db.execute(select(func.count(Invoice.id)).where(Invoice.status == InvoiceStatus.pending))
+    ).scalar_one()
+    invoices_expired = (
+        await db.execute(select(func.count(Invoice.id)).where(Invoice.status == InvoiceStatus.expired))
+    ).scalar_one()
 
     payments_total = (await db.execute(select(func.count(Payment.id)))).scalar_one()
-    payments_confirmed = (await db.execute(
-        select(func.count(Payment.id)).where(Payment.status == PaymentStatus.confirmed)
-    )).scalar_one()
+    payments_confirmed = (
+        await db.execute(select(func.count(Payment.id)).where(Payment.status == PaymentStatus.confirmed))
+    ).scalar_one()
 
-    revenue_row = (await db.execute(
-        select(func.coalesce(func.sum(Payment.amount_atomic), 0))
-        .where(Payment.status == PaymentStatus.confirmed)
-    )).scalar_one()
+    revenue_row = (
+        await db.execute(
+            select(func.coalesce(func.sum(Payment.amount_atomic), 0)).where(Payment.status == PaymentStatus.confirmed)
+        )
+    ).scalar_one()
     total_revenue_atomic = int(revenue_row)
     total_revenue_xmr = f"{total_revenue_atomic / 1e12:.12f}"
 
     subs_total = (await db.execute(select(func.count(Subscription.id)))).scalar_one()
-    subs_active = (await db.execute(
-        select(func.count(Subscription.id)).where(Subscription.status == SubscriptionStatus.active)
-    )).scalar_one()
-    subs_trialing = (await db.execute(
-        select(func.count(Subscription.id)).where(Subscription.status == SubscriptionStatus.trialing)
-    )).scalar_one()
+    subs_active = (
+        await db.execute(select(func.count(Subscription.id)).where(Subscription.status == SubscriptionStatus.active))
+    ).scalar_one()
+    subs_trialing = (
+        await db.execute(select(func.count(Subscription.id)).where(Subscription.status == SubscriptionStatus.trialing))
+    ).scalar_one()
 
-    wh_pending = (await db.execute(
-        select(func.count(WebhookDelivery.id)).where(WebhookDelivery.status == WebhookStatus.pending)
-    )).scalar_one()
-    dlq_unresolved = (await db.execute(
-        select(func.count(WebhookDeadLetter.id)).where(WebhookDeadLetter.resolved == False)
-    )).scalar_one()
+    wh_pending = (
+        await db.execute(select(func.count(WebhookDelivery.id)).where(WebhookDelivery.status == WebhookStatus.pending))
+    ).scalar_one()
+    dlq_unresolved = (
+        await db.execute(select(func.count(WebhookDeadLetter.id)).where(WebhookDeadLetter.resolved == False))
+    ).scalar_one()
 
     return AdminStatsResponse(
-        merchants_total=merchants_total, merchants_active=merchants_active,
-        invoices_total=invoices_total, invoices_paid=invoices_paid,
-        invoices_pending=invoices_pending, invoices_expired=invoices_expired,
-        payments_total=payments_total, payments_confirmed=payments_confirmed,
-        total_revenue_atomic=total_revenue_atomic, total_revenue_xmr=total_revenue_xmr,
-        subscriptions_total=subs_total, subscriptions_active=subs_active,
+        merchants_total=merchants_total,
+        merchants_active=merchants_active,
+        invoices_total=invoices_total,
+        invoices_paid=invoices_paid,
+        invoices_pending=invoices_pending,
+        invoices_expired=invoices_expired,
+        payments_total=payments_total,
+        payments_confirmed=payments_confirmed,
+        total_revenue_atomic=total_revenue_atomic,
+        total_revenue_xmr=total_revenue_xmr,
+        subscriptions_total=subs_total,
+        subscriptions_active=subs_active,
         subscriptions_trialing=subs_trialing,
-        webhook_deliveries_pending=wh_pending, webhook_dlq_unresolved=dlq_unresolved,
+        webhook_deliveries_pending=wh_pending,
+        webhook_dlq_unresolved=dlq_unresolved,
     )
 
 
@@ -269,8 +275,8 @@ async def detailed_health(
     db: AsyncSession = Depends(get_db),
 ):
     """Detailed system health for instance operator."""
-    from app.tasks.detection_helpers import get_health_metrics
     from app.dependencies import get_redis
+    from app.tasks.detection_helpers import get_health_metrics
 
     detection = await get_health_metrics()
 
@@ -279,8 +285,8 @@ async def detailed_health(
         pool = db.get_bind().pool
         db_info = {
             "connected": True,
-            "pool_size": pool.size() if hasattr(pool, 'size') else "unknown",
-            "checked_out": pool.checkedout() if hasattr(pool, 'checkedout') else "unknown",
+            "pool_size": pool.size() if hasattr(pool, "size") else "unknown",
+            "checked_out": pool.checkedout() if hasattr(pool, "checkedout") else "unknown",
         }
     except Exception as exc:
         db_info = {"connected": False, "error": str(exc)}
@@ -298,6 +304,7 @@ async def detailed_health(
 
     try:
         from app.services.monero_rpc import get_monero_rpc
+
         rpc = get_monero_rpc()
         height = await rpc.get_height()
         wallet_info = {"connected": True, "height": height}
@@ -311,10 +318,15 @@ async def detailed_health(
     }
 
     return AdminHealthResponse(
-        status="healthy", app=settings.app_name, version=settings.app_version,
+        status="healthy",
+        app=settings.app_name,
+        version=settings.app_version,
         uptime_info="check docker ps for container uptime",
-        detection=detection, database=db_info, redis=redis_info,
-        wallet_rpc=wallet_info, background_tasks=bg_info,
+        detection=detection,
+        database=db_info,
+        redis=redis_info,
+        wallet_rpc=wallet_info,
+        background_tasks=bg_info,
     )
 
 
@@ -337,13 +349,16 @@ async def list_dlq(
     rows = (await db.execute(stmt)).all()
     entries = [
         AdminDlqEntry(
-            id=str(dlq.id), delivery_id=str(dlq.delivery_id),
-            merchant_id=str(dlq.merchant_id), merchant_name=m_name,
+            id=str(dlq.id),
+            delivery_id=str(dlq.delivery_id),
+            merchant_id=str(dlq.merchant_id),
+            merchant_name=m_name,
             event_type=dlq.event_type,
             original_created_at=dlq.original_created_at.isoformat(),
             dead_lettered_at=dlq.dead_lettered_at.isoformat(),
             retry_count=dlq.retry_count,
-            last_error=dlq.last_error, resolved=dlq.resolved,
+            last_error=dlq.last_error,
+            resolved=dlq.resolved,
         )
         for dlq, m_name in rows
     ]
@@ -358,18 +373,16 @@ async def retry_dlq_entry(
     db: AsyncSession = Depends(get_db),
 ):
     """Retry a Dead Letter Queue entry (re-queue for delivery)."""
-    dlq_entry = (await db.execute(
-        select(WebhookDeadLetter).where(WebhookDeadLetter.id == dlq_id)
-    )).scalar_one_or_none()
+    dlq_entry = (await db.execute(select(WebhookDeadLetter).where(WebhookDeadLetter.id == dlq_id))).scalar_one_or_none()
     if dlq_entry is None:
         raise HTTPException(status_code=404, detail="DLQ entry not found.")
     if dlq_entry.resolved:
         raise HTTPException(status_code=400, detail="DLQ entry already resolved.")
 
     # Re-create a pending webhook delivery from the DLQ payload
-    target_merchant = (await db.execute(
-        select(Merchant).where(Merchant.id == dlq_entry.merchant_id)
-    )).scalar_one_or_none()
+    target_merchant = (
+        await db.execute(select(Merchant).where(Merchant.id == dlq_entry.merchant_id))
+    ).scalar_one_or_none()
     if target_merchant is None or not target_merchant.webhook_url:
         raise HTTPException(status_code=400, detail="Merchant has no webhook URL.")
 

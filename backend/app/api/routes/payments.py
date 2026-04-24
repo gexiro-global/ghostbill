@@ -102,9 +102,7 @@ async def list_payments(
 
     # Build base query: payments scoped to merchant via invoice join
     base_query = (
-        select(Payment)
-        .join(Invoice, Payment.invoice_id == Invoice.id)
-        .where(Invoice.merchant_id == merchant.id)
+        select(Payment).join(Invoice, Payment.invoice_id == Invoice.id).where(Invoice.merchant_id == merchant.id)
     )
     if parsed_invoice_id is not None:
         base_query = base_query.where(Payment.invoice_id == parsed_invoice_id)
@@ -112,8 +110,12 @@ async def list_payments(
         base_query = base_query.where(Payment.status == parsed_status)
 
     result = await paginate_cursor(
-        db=db, base_query=base_query, model=Payment,
-        limit=limit, starting_after=starting_after, ending_before=ending_before,
+        db=db,
+        base_query=base_query,
+        model=Payment,
+        limit=limit,
+        starting_after=starting_after,
+        ending_before=ending_before,
     )
 
     return PaymentCursorResponse(

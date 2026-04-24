@@ -27,11 +27,11 @@ from app.db.models import (
 from app.db.session import async_session
 from app.services.invoice_service import WalletUnavailableError
 from app.services.subscription_exceptions import SkipRenewalError
+from app.services.subscription_grace import check_grace_periods
 from app.services.subscription_renewal import (
     create_renewal_invoice,
     log_renewal_event,
 )
-from app.services.subscription_grace import check_grace_periods
 
 logger = logging.getLogger(__name__)
 
@@ -78,16 +78,21 @@ async def _check_prepay_guard(db: AsyncSession, sub: Subscription) -> bool:
         return True
 
     if invoice.status in (
-        InvoiceStatus.paid, InvoiceStatus.overpaid, InvoiceStatus.late_paid,
+        InvoiceStatus.paid,
+        InvoiceStatus.overpaid,
+        InvoiceStatus.late_paid,
     ):
         # Prepay already paid — next_due_at should be advanced. Skip.
         return True
 
     # Invoice expired or cancelled — clear prepay and allow renewal
     from app.services.subscription_prepay import clear_expired_prepay
+
     await clear_expired_prepay(db, sub)
     await log_renewal_event(
-        db, sub.id, "prepay_expired",
+        db,
+        sub.id,
+        "prepay_expired",
         details={"invoice_id": str(invoice.id), "invoice_status": invoice.status.value},
     )
     return False
@@ -124,13 +129,14 @@ async def run_sweep() -> dict:
                 await db.flush()
                 # Fire trial_ended event
                 from app.services.webhook_service import webhook_service
-                merchant = (await db.execute(
-                    select(Merchant).where(Merchant.id == sub.merchant_id)
-                )).scalar_one_or_none()
+
+                merchant = (
+                    await db.execute(select(Merchant).where(Merchant.id == sub.merchant_id))
+                ).scalar_one_or_none()
                 if merchant:
                     await webhook_service.dispatch_subscription_event(
-                        db=db, event_type="subscription.trial_ended",
-                        subscription=sub, reason="trial_expired")
+                        db=db, event_type="subscription.trial_ended", subscription=sub, reason="trial_expired"
+                    )
                 # Create first invoice
                 try:
                     await create_renewal_invoice(db, sub)
@@ -170,21 +176,27 @@ async def run_sweep() -> dict:
                 except SkipRenewalError as exc:
                     skipped += 1
                     await log_renewal_event(
-                        db, sub.id, exc.result_type,
+                        db,
+                        sub.id,
+                        exc.result_type,
                         error_message=str(exc),
                     )
                 except WalletUnavailableError as exc:
                     failed += 1
                     logger.warning("Renewal failed (wallet): sub=%s, %s", sub.id, exc)
                     await log_renewal_event(
-                        db, sub.id, "failed_wallet",
+                        db,
+                        sub.id,
+                        "failed_wallet",
                         error_message=str(exc),
                     )
                 except Exception as exc:
                     failed += 1
                     logger.error("Renewal failed: sub=%s, %s", sub.id, exc, exc_info=True)
                     await log_renewal_event(
-                        db, sub.id, "failed_db",
+                        db,
+                        sub.id,
+                        "failed_db",
                         error_message=str(exc),
                     )
 
@@ -198,13 +210,21 @@ async def run_sweep() -> dict:
         logger.info(
             "Renewer: %d renewed, %d skipped, %d failed, %d trials, %d prepay_skipped, "
             "%d past_due, %d expired, %d recovered",
-            renewed, skipped, failed, trial_activated, prepay_skipped,
-            grace_counts.get("soft", 0), grace_counts.get("hard", 0),
+            renewed,
+            skipped,
+            failed,
+            trial_activated,
+            prepay_skipped,
+            grace_counts.get("soft", 0),
+            grace_counts.get("hard", 0),
             grace_counts.get("recovered", 0),
         )
 
     return {
-        "renewed": renewed, "skipped": skipped, "failed": failed,
-        "trial_activated": trial_activated, "prepay_skipped": prepay_skipped,
+        "renewed": renewed,
+        "skipped": skipped,
+        "failed": failed,
+        "trial_activated": trial_activated,
+        "prepay_skipped": prepay_skipped,
         "grace": grace_counts,
     }

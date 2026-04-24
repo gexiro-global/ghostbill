@@ -26,28 +26,32 @@ from starlette.responses import Response
 logger = logging.getLogger(__name__)
 
 # CSP: restrictive for API backend (no inline scripts, no external resources)
-CONTENT_SECURITY_POLICY = "; ".join([
-    "default-src 'none'",
-    "frame-ancestors 'none'",
-    "base-uri 'none'",
-    "form-action 'none'",
-])
+CONTENT_SECURITY_POLICY = "; ".join(
+    [
+        "default-src 'none'",
+        "frame-ancestors 'none'",
+        "base-uri 'none'",
+        "form-action 'none'",
+    ]
+)
 
 # HSTS: 1 year, include subdomains
 STRICT_TRANSPORT_SECURITY = "max-age=31536000; includeSubDomains"
 
 # Permissions-Policy: deny everything (API backend needs none of these)
-PERMISSIONS_POLICY = ", ".join([
-    "accelerometer=()",
-    "camera=()",
-    "geolocation=()",
-    "gyroscope=()",
-    "magnetometer=()",
-    "microphone=()",
-    "payment=()",
-    "usb=()",
-    "interest-cohort=()",
-])
+PERMISSIONS_POLICY = ", ".join(
+    [
+        "accelerometer=()",
+        "camera=()",
+        "geolocation=()",
+        "gyroscope=()",
+        "magnetometer=()",
+        "microphone=()",
+        "payment=()",
+        "usb=()",
+        "interest-cohort=()",
+    ]
+)
 
 # Headers applied to ALL responses
 SECURITY_HEADERS_ALWAYS: dict[str, str] = {
@@ -88,9 +92,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     does NOT overwrite those headers for public paths.
     """
 
-    async def dispatch(
-        self, request: Request, call_next: RequestResponseEndpoint
-    ) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         response = await call_next(request)
 
         # Always add base security headers

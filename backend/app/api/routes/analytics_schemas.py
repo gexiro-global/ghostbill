@@ -5,12 +5,12 @@ Phase 7A: Revenue charts, invoice breakdown, subscription metrics.
 
 from pydantic import BaseModel, Field
 
-
 # ── Revenue ────────────────────────────────────────────────────────────
 
 
 class RevenueDayPoint(BaseModel):
     """Single data point for revenue chart."""
+
     date: str = Field(..., description="ISO date (YYYY-MM-DD)")
     count: int = Field(..., description="Number of confirmed payments")
     amount_atomic: int = Field(..., description="Total piconero received")
@@ -19,6 +19,7 @@ class RevenueDayPoint(BaseModel):
 
 class RevenueResponse(BaseModel):
     """Revenue over time for chart rendering."""
+
     period: str = Field(..., description="Period: 7d, 30d, 90d, 1y")
     data: list[RevenueDayPoint] = Field(default_factory=list)
     total_atomic: int = Field(..., description="Grand total piconero")
@@ -36,6 +37,7 @@ class InvoiceStatusCount(BaseModel):
 
 class InvoiceStatsResponse(BaseModel):
     """Invoice status breakdown."""
+
     total: int = Field(..., description="Total invoices in period")
     data: list[InvoiceStatusCount] = Field(default_factory=list)
     period_days: int = Field(..., description="Lookback period in days")
@@ -46,6 +48,7 @@ class InvoiceStatsResponse(BaseModel):
 
 class SubscriptionMetricsResponse(BaseModel):
     """Subscription health overview."""
+
     active: int = Field(..., description="Currently active subscriptions")
     paused: int = Field(default=0)
     past_due: int = Field(default=0)

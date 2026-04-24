@@ -17,10 +17,10 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-SCAN_INTERVAL: int = 30          # seconds between regular scans
-DEEP_SCAN_INTERVAL: int = 3600   # seconds between deep scans (1 hour)
-DEEP_SCAN_BLOCKS: int = 100      # how far back deep scan goes
-REORG_BUFFER: int = 10           # Phase 6C: scan N blocks back for safety
+SCAN_INTERVAL: int = 30  # seconds between regular scans
+DEEP_SCAN_INTERVAL: int = 3600  # seconds between deep scans (1 hour)
+DEEP_SCAN_BLOCKS: int = 100  # how far back deep scan goes
+REORG_BUFFER: int = 10  # Phase 6C: scan N blocks back for safety
 
 REDIS_HEIGHT_KEY: str = "ghostbill:last_scanned_height"
 REDIS_LAST_SWEEP_KEY: str = "ghostbill:detection:last_sweep_at"
@@ -28,6 +28,7 @@ REDIS_BLOCKS_BEHIND_KEY: str = "ghostbill:detection:blocks_behind"
 
 
 # ── Redis Helpers ────────────────────────────────────────────────────────────
+
 
 async def _get_redis() -> aioredis.Redis:
     """Get Redis connection."""
@@ -62,6 +63,7 @@ async def save_last_scanned_height(height: int) -> None:
 async def save_health_metrics(current_height: int, last_scanned: int) -> None:
     """Save detection health metrics to Redis (Phase 6C)."""
     from datetime import datetime, timezone
+
     try:
         r = await _get_redis()
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -93,6 +95,7 @@ async def get_health_metrics() -> dict:
 
 # ── Model Loaders ────────────────────────────────────────────────────────────
 
+
 async def load_merchant(db: AsyncSession, merchant_id) -> Merchant | None:
     """Load merchant by ID."""
     stmt = select(Merchant).where(Merchant.id == merchant_id)
@@ -102,10 +105,6 @@ async def load_merchant(db: AsyncSession, merchant_id) -> Merchant | None:
 
 async def load_invoice_with_payments(db: AsyncSession, invoice_id) -> Invoice | None:
     """Load invoice with payments eagerly loaded."""
-    stmt = (
-        select(Invoice)
-        .where(Invoice.id == invoice_id)
-        .options(selectinload(Invoice.payments))
-    )
+    stmt = select(Invoice).where(Invoice.id == invoice_id).options(selectinload(Invoice.payments))
     result = await db.execute(stmt)
     return result.scalar_one_or_none()

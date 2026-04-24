@@ -16,7 +16,6 @@ import logging
 import re
 from typing import Pattern
 
-
 # Compiled redaction patterns (order matters — most specific first)
 REDACTION_RULES: list[tuple[Pattern[str], str]] = [
     # GhostBill API keys: gb_live_<32hex> or gb_test_<32hex>
@@ -79,15 +78,9 @@ class RedactionFilter(logging.Filter):
         # Redact args if they contain strings
         if record.args:
             if isinstance(record.args, dict):
-                record.args = {
-                    k: redact(str(v)) if isinstance(v, str) else v
-                    for k, v in record.args.items()
-                }
+                record.args = {k: redact(str(v)) if isinstance(v, str) else v for k, v in record.args.items()}
             elif isinstance(record.args, tuple):
-                record.args = tuple(
-                    redact(str(a)) if isinstance(a, str) else a
-                    for a in record.args
-                )
+                record.args = tuple(redact(str(a)) if isinstance(a, str) else a for a in record.args)
 
         # Redact exception text if present
         if record.exc_text and isinstance(record.exc_text, str):

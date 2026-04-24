@@ -38,7 +38,6 @@ from app.tasks.detection_helpers import (
     REORG_BUFFER,
     SCAN_INTERVAL,
     get_last_scanned_height,
-    load_invoice_with_payments,
     load_merchant,
     save_health_metrics,
     save_last_scanned_height,
@@ -48,6 +47,7 @@ logger = logging.getLogger(__name__)
 
 
 # ── Core Scan Logic ────────────────────────────────────────────────────────
+
 
 async def _scan_transfers(
     db: AsyncSession,
@@ -95,9 +95,7 @@ async def _scan_transfers(
             )
             old_invoice_status = invoice.status if invoice else None
 
-            existing_payment = await payment_service.find_payment_by_tx_hash(
-                db, tx["txid"]
-            )
+            existing_payment = await payment_service.find_payment_by_tx_hash(db, tx["txid"])
             old_payment_status = existing_payment.status if existing_payment else None
 
             payment = await payment_service.process_transfer(db, tx, is_mempool)
@@ -121,20 +119,21 @@ async def _scan_transfers(
                     merchant = await load_merchant(db, invoice.merchant_id)
                     if merchant:
                         await webhook_service.dispatch_events(
-                            db=db, events=events,
-                            merchant=merchant, invoice=invoice,
+                            db=db,
+                            events=events,
+                            merchant=merchant,
+                            invoice=invoice,
                             payment=payment,
                         )
 
         except Exception:
-            logger.exception(
-                "Error processing transfer txid=%s", tx.get("txid", "?")[:16]
-            )
+            logger.exception("Error processing transfer txid=%s", tx.get("txid", "?")[:16])
 
     return processed
 
 
 # ── Background Task ────────────────────────────────────────────────────────
+
 
 async def detection_engine_loop() -> None:
     """Main detection engine background loop.
@@ -146,7 +145,10 @@ async def detection_engine_loop() -> None:
     """
     logger.info(
         "Detection engine started: scan=%ds, deep_scan=%ds, deep_blocks=%d, reorg_buffer=%d",
-        SCAN_INTERVAL, DEEP_SCAN_INTERVAL, DEEP_SCAN_BLOCKS, REORG_BUFFER,
+        SCAN_INTERVAL,
+        DEEP_SCAN_INTERVAL,
+        DEEP_SCAN_BLOCKS,
+        REORG_BUFFER,
     )
 
     last_deep_scan = datetime.now(timezone.utc)
@@ -179,7 +181,10 @@ async def detection_engine_loop() -> None:
                     if processed > 0:
                         logger.info(
                             "Regular scan: %d payments, height %d→%d (buffer: %d)",
-                            processed, last_scanned, current_height, REORG_BUFFER,
+                            processed,
+                            last_scanned,
+                            current_height,
+                            REORG_BUFFER,
                         )
 
                     await save_last_scanned_height(current_height)
@@ -200,7 +205,9 @@ async def detection_engine_loop() -> None:
                     if processed > 0:
                         logger.info(
                             "Deep scan: %d payments, height %d→%d",
-                            processed, deep_from, current_height,
+                            processed,
+                            deep_from,
+                            current_height,
                         )
 
                     last_deep_scan = now
@@ -208,9 +215,7 @@ async def detection_engine_loop() -> None:
                 # ── Update confirmations ─────────────────────────────
                 confirmed = await update_unconfirmed(db)
                 if confirmed > 0:
-                    logger.info(
-                        "Confirmation update: %d payments confirmed", confirmed
-                    )
+                    logger.info("Confirmation update: %d payments confirmed", confirmed)
 
                 await db.commit()
 

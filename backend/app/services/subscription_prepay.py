@@ -9,7 +9,7 @@ Handles:
 import logging
 import uuid
 from datetime import timedelta
-from decimal import Decimal, ROUND_DOWN
+from decimal import ROUND_DOWN, Decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import (
     AuditLog,
     Invoice,
-    InvoiceStatus,
     Merchant,
     Subscription,
     SubscriptionPayment,
@@ -30,7 +29,7 @@ from app.services.subscription_exceptions import (
     SubscriptionStateError,
     SubscriptionValidationError,
 )
-from app.services.subscription_renewal import calculate_next_due, log_renewal_event
+from app.services.subscription_renewal import log_renewal_event
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +50,9 @@ def _find_plan(merchant: Merchant, periods: int) -> dict | None:
 
 
 def _calculate_prepay_amount(
-    per_period_xmr: Decimal, periods: int, discount_pct: int,
+    per_period_xmr: Decimal,
+    periods: int,
+    discount_pct: int,
 ) -> tuple[Decimal, int]:
     """Calculate total XMR and atomic amount for prepay invoice.
 
@@ -61,7 +62,8 @@ def _calculate_prepay_amount(
     if discount_pct > 0:
         discount_factor = Decimal(100 - discount_pct) / Decimal(100)
         total_xmr = (total_xmr * discount_factor).quantize(
-            Decimal("0.000000000001"), rounding=ROUND_DOWN,
+            Decimal("0.000000000001"),
+            rounding=ROUND_DOWN,
         )
     total_atomic = xmr_to_atomic(total_xmr)
     return total_xmr, total_atomic
@@ -97,9 +99,7 @@ async def create_prepay_invoice(
         )
 
     if sub.prepay_invoice_id is not None:
-        raise SubscriptionStateError(
-            "Subscription already has a pending prepay invoice."
-        )
+        raise SubscriptionStateError("Subscription already has a pending prepay invoice.")
 
     # 2. Find and validate plan
     if periods < 1:
@@ -108,19 +108,18 @@ async def create_prepay_invoice(
     plan = _find_plan(merchant, periods)
     if plan is None:
         raise SubscriptionValidationError(
-            f"No prepay plan configured for {periods} periods. "
-            f"Configure plans via PATCH /v1/merchants/me."
+            f"No prepay plan configured for {periods} periods. Configure plans via PATCH /v1/merchants/me."
         )
 
     discount_pct = plan.get("discount_pct", 0)
     if not isinstance(discount_pct, (int, float)) or discount_pct < 0 or discount_pct > 99:
-        raise SubscriptionValidationError(
-            f"Invalid discount_pct in plan: {discount_pct}"
-        )
+        raise SubscriptionValidationError(f"Invalid discount_pct in plan: {discount_pct}")
 
     # 3. Calculate amount
     total_xmr, total_atomic = _calculate_prepay_amount(
-        sub.amount_xmr, periods, int(discount_pct),
+        sub.amount_xmr,
+        periods,
+        int(discount_pct),
     )
 
     # 4. Create invoice
@@ -128,7 +127,9 @@ async def create_prepay_invoice(
     expires_in = min(expires_in, 30 * 86400)  # cap at 30 days
 
     invoice = await invoice_service.create_invoice(
-        db=db, merchant=merchant, amount_xmr_raw=total_xmr,
+        db=db,
+        merchant=merchant,
+        amount_xmr_raw=total_xmr,
         description=f"Prepay {periods}x for subscription {sub.id}",
         expires_in=expires_in,
         metadata={
@@ -147,20 +148,27 @@ async def create_prepay_invoice(
     sub.prepaid_until = prepaid_end
 
     # 6. Audit
-    db.add(AuditLog(
-        merchant_id=merchant.id, action="subscription.prepay_created",
-        entity_type="subscription", entity_id=sub.id,
-        details={
-            "invoice_id": str(invoice.id),
-            "periods": periods,
-            "discount_pct": int(discount_pct),
-            "total_xmr": str(total_xmr),
-            "total_atomic": total_atomic,
-        },
-    ))
+    db.add(
+        AuditLog(
+            merchant_id=merchant.id,
+            action="subscription.prepay_created",
+            entity_type="subscription",
+            entity_id=sub.id,
+            details={
+                "invoice_id": str(invoice.id),
+                "periods": periods,
+                "discount_pct": int(discount_pct),
+                "total_xmr": str(total_xmr),
+                "total_atomic": total_atomic,
+            },
+        )
+    )
 
     await log_renewal_event(
-        db, sub.id, "prepay_created", invoice_id=invoice.id,
+        db,
+        sub.id,
+        "prepay_created",
+        invoice_id=invoice.id,
         details={"periods": periods, "discount_pct": int(discount_pct)},
     )
 
@@ -168,13 +176,19 @@ async def create_prepay_invoice(
 
     logger.info(
         "Prepay invoice created: sub=%s, invoice=%s, %dx, -%d%%, total=%s XMR",
-        sub.id, invoice.id, periods, discount_pct, total_xmr,
+        sub.id,
+        invoice.id,
+        periods,
+        discount_pct,
+        total_xmr,
     )
     return invoice
 
 
 async def handle_prepay_payment(
-    db: AsyncSession, invoice: Invoice, sub: Subscription,
+    db: AsyncSession,
+    invoice: Invoice,
+    sub: Subscription,
 ) -> None:
     """Process a paid prepay invoice.
 
@@ -211,19 +225,26 @@ async def handle_prepay_payment(
         logger.info("Subscription %s: past_due → active (prepay payment)", sub.id)
 
     # Audit
-    db.add(AuditLog(
-        merchant_id=sub.merchant_id, action="subscription.prepay_fulfilled",
-        entity_type="subscription", entity_id=sub.id,
-        details={
-            "invoice_id": str(invoice.id),
-            "periods": periods,
-            "discount_pct": discount_pct,
-            "new_next_due": new_next_due.isoformat(),
-        },
-    ))
+    db.add(
+        AuditLog(
+            merchant_id=sub.merchant_id,
+            action="subscription.prepay_fulfilled",
+            entity_type="subscription",
+            entity_id=sub.id,
+            details={
+                "invoice_id": str(invoice.id),
+                "periods": periods,
+                "discount_pct": discount_pct,
+                "new_next_due": new_next_due.isoformat(),
+            },
+        )
+    )
 
     await log_renewal_event(
-        db, sub.id, "prepay_fulfilled", invoice_id=invoice.id,
+        db,
+        sub.id,
+        "prepay_fulfilled",
+        invoice_id=invoice.id,
         details={
             "periods": periods,
             "new_next_due": new_next_due.isoformat(),
@@ -234,12 +255,15 @@ async def handle_prepay_payment(
 
     logger.info(
         "Prepay fulfilled: sub=%s, %d periods, next_due=%s",
-        sub.id, periods, new_next_due.date(),
+        sub.id,
+        periods,
+        new_next_due.date(),
     )
 
 
 async def clear_expired_prepay(
-    db: AsyncSession, sub: Subscription,
+    db: AsyncSession,
+    sub: Subscription,
 ) -> None:
     """Clear prepay fields when prepay invoice expired/cancelled.
 

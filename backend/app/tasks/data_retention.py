@@ -12,7 +12,7 @@ Deletes are batched (LIMIT 500 per cycle) to avoid long-running transactions.
 
 import asyncio
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,11 +22,11 @@ from app.db.session import async_session
 logger = logging.getLogger(__name__)
 
 # Retention periods
-INVOICE_RETENTION_HOURS = 48       # Expired/cancelled invoices
-WEBHOOK_RETENTION_DAYS = 30        # Webhook delivery logs
-AUDIT_RETENTION_DAYS = 90          # Audit log entries
-BATCH_SIZE = 500                   # Max rows per DELETE
-CYCLE_INTERVAL_SECONDS = 3600     # Run every hour
+INVOICE_RETENTION_HOURS = 48  # Expired/cancelled invoices
+WEBHOOK_RETENTION_DAYS = 30  # Webhook delivery logs
+AUDIT_RETENTION_DAYS = 90  # Audit log entries
+BATCH_SIZE = 500  # Max rows per DELETE
+CYCLE_INTERVAL_SECONDS = 3600  # Run every hour
 
 
 async def _cleanup_expired_invoices(db: AsyncSession) -> int:

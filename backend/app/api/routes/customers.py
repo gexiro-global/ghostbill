@@ -85,8 +85,11 @@ async def create_customer(
     """Create a new customer for the authenticated merchant."""
     try:
         customer = await customer_service.create_customer(
-            db=db, merchant_id=merchant.id,
-            external_id=body.external_id, email=body.email, metadata=body.metadata,
+            db=db,
+            merchant_id=merchant.id,
+            external_id=body.external_id,
+            email=body.email,
+            metadata=body.metadata,
         )
         await db.commit()
     except CustomerValidationError as exc:
@@ -110,8 +113,12 @@ async def list_customers(
     base_query = select(Customer).where(Customer.merchant_id == merchant.id)
 
     result = await paginate_cursor(
-        db=db, base_query=base_query, model=Customer,
-        limit=limit, starting_after=starting_after, ending_before=ending_before,
+        db=db,
+        base_query=base_query,
+        model=Customer,
+        limit=limit,
+        starting_after=starting_after,
+        ending_before=ending_before,
     )
 
     return CustomerCursorResponse(
@@ -128,8 +135,7 @@ async def get_customer(
 ):
     """Get a single customer by ID."""
     try:
-        customer = await customer_service.get_customer(
-            db=db, merchant_id=merchant.id, customer_id=customer_id)
+        customer = await customer_service.get_customer(db=db, merchant_id=merchant.id, customer_id=customer_id)
     except CustomerNotFoundError:
         raise HTTPException(status_code=404, detail=f"Customer {customer_id} not found.")
     return _customer_to_response(customer)
@@ -156,7 +162,8 @@ async def update_customer(
 
     try:
         customer = await customer_service.update_customer(
-            db=db, merchant_id=merchant.id, customer_id=customer_id, **kwargs)
+            db=db, merchant_id=merchant.id, customer_id=customer_id, **kwargs
+        )
         await db.commit()
     except CustomerNotFoundError:
         raise HTTPException(status_code=404, detail=f"Customer {customer_id} not found.")

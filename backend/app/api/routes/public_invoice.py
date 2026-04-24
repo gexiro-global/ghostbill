@@ -29,7 +29,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
-from app.db.models import Invoice, InvoiceAddress, Payment, PaymentStatus
+from app.db.models import Invoice, Payment, PaymentStatus
 from app.db.session import async_session
 
 logger = logging.getLogger(__name__)
@@ -52,7 +52,9 @@ TERMINAL_STATUSES = {"paid", "expired", "cancelled"}
 
 # Security headers for all public responses
 SECURITY_HEADERS = {
-    "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:",
+    "Content-Security-Policy": (
+        "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:"
+    ),
     "X-Frame-Options": "DENY",
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
@@ -101,11 +103,7 @@ async def _fetch_invoice_public_data(parsed_id: uuid.UUID) -> dict | None:
     Used by both GET /public and GET /events (SSE).
     """
     async with async_session() as db:
-        result = await db.execute(
-            select(Invoice)
-            .options(selectinload(Invoice.address))
-            .where(Invoice.id == parsed_id)
-        )
+        result = await db.execute(select(Invoice).options(selectinload(Invoice.address)).where(Invoice.id == parsed_id))
         invoice = result.scalar_one_or_none()
 
         if invoice is None:
@@ -118,8 +116,7 @@ async def _fetch_invoice_public_data(parsed_id: uuid.UUID) -> dict | None:
             select(
                 func.coalesce(func.sum(Payment.amount_atomic), 0).label("paid_total"),
                 func.coalesce(func.max(Payment.confirmations), 0).label("max_confirmations"),
-            )
-            .where(
+            ).where(
                 Payment.invoice_id == parsed_id,
                 Payment.status.in_([PaymentStatus.detected, PaymentStatus.confirmed]),
             )
@@ -213,7 +210,7 @@ async def invoice_sse(invoice_id: str):
         while elapsed < SSE_MAX_DURATION:
             data = await _fetch_invoice_public_data(parsed_id)
             if data is None:
-                yield "event: close\ndata: {\"reason\": \"not_found\"}\n\n"
+                yield 'event: close\ndata: {"reason": "not_found"}\n\n'
                 return
 
             changed = (
@@ -232,14 +229,14 @@ async def invoice_sse(invoice_id: str):
                 last_paid = data["paid_amount_atomic"]
 
                 if last_status in TERMINAL_STATUSES:
-                    yield f"event: close\ndata: {{\"reason\": \"{last_status}\"}}\n\n"
+                    yield f'event: close\ndata: {{"reason": "{last_status}"}}\n\n'
                     return
 
             await asyncio.sleep(SSE_POLL_INTERVAL)
             elapsed += SSE_POLL_INTERVAL
 
         # Max duration reached
-        yield "event: close\ndata: {\"reason\": \"timeout\"}\n\n"
+        yield 'event: close\ndata: {"reason": "timeout"}\n\n'
 
     headers = {
         "Cache-Control": "no-cache",

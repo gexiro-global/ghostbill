@@ -166,7 +166,9 @@ async def create_invoice(
         payload["metadata"] = metadata
 
     resp = await client.post(
-        "/v1/invoices", json=payload, headers=auth_headers(api_key),
+        "/v1/invoices",
+        json=payload,
+        headers=auth_headers(api_key),
     )
     assert resp.status_code == 201, f"Invoice creation failed: {resp.status_code} {resp.text}"
     return resp.json()
@@ -178,7 +180,8 @@ async def get_invoice(
     invoice_id: str,
 ) -> dict[str, Any]:
     resp = await client.get(
-        f"/v1/invoices/{invoice_id}", headers=auth_headers(api_key),
+        f"/v1/invoices/{invoice_id}",
+        headers=auth_headers(api_key),
     )
     assert resp.status_code == 200, f"Get invoice failed: {resp.status_code} {resp.text}"
     return resp.json()
@@ -246,12 +249,15 @@ async def update_invoice_status_db(invoice_id: str, new_status: str, paid_at: da
     if paid_at is not None:
         await db_execute(
             "UPDATE invoices SET status = $1::invoice_status, paid_at = $2, updated_at = NOW() WHERE id = $3::uuid",
-            new_status, paid_at, uuid.UUID(invoice_id),
+            new_status,
+            paid_at,
+            uuid.UUID(invoice_id),
         )
     else:
         await db_execute(
             "UPDATE invoices SET status = $1::invoice_status, updated_at = NOW() WHERE id = $2::uuid",
-            new_status, uuid.UUID(invoice_id),
+            new_status,
+            uuid.UUID(invoice_id),
         )
 
 
@@ -272,7 +278,8 @@ async def count_payments_for_invoice(invoice_id: str, status: str | None = None)
     if status is not None:
         row = await db_fetchrow(
             "SELECT COUNT(*) as cnt FROM payments WHERE invoice_id = $1::uuid AND status = $2::payment_status",
-            uuid.UUID(invoice_id), status,
+            uuid.UUID(invoice_id),
+            status,
         )
     else:
         row = await db_fetchrow(
@@ -293,7 +300,8 @@ async def sum_payments_for_invoice(invoice_id: str) -> int:
 async def update_payment_status_db(payment_id: str, new_status: str) -> None:
     await db_execute(
         "UPDATE payments SET status = $1::payment_status WHERE id = $2::uuid",
-        new_status, uuid.UUID(payment_id),
+        new_status,
+        uuid.UUID(payment_id),
     )
 
 
@@ -342,6 +350,7 @@ async def cleanup_merchant_data(merchant_id: str) -> None:
 
 def pytest_configure(config):
     import urllib.request
+
     try:
         req = urllib.request.urlopen(f"{BASE_URL}/health", timeout=5)
         data = json.loads(req.read())

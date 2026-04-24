@@ -15,7 +15,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -58,12 +58,14 @@ router = APIRouter(prefix="/subscriptions", tags=["subscriptions"])
 
 
 def _build_pending_changes(sub):
-    has_any = any([
-        sub.pending_amount_atomic is not None,
-        sub.pending_interval_days is not None,
-        sub.pending_grace_soft is not None,
-        sub.pending_grace_hard is not None,
-    ])
+    has_any = any(
+        [
+            sub.pending_amount_atomic is not None,
+            sub.pending_interval_days is not None,
+            sub.pending_grace_soft is not None,
+            sub.pending_grace_hard is not None,
+        ]
+    )
     if not has_any:
         return None, False
     changes = {}
@@ -82,10 +84,14 @@ def _build_pending_changes(sub):
 def _sub_to_response(sub) -> SubscriptionResponse:
     pending, has_pending = _build_pending_changes(sub)
     return SubscriptionResponse(
-        id=str(sub.id), merchant_id=str(sub.merchant_id),
-        customer_id=str(sub.customer_id), amount_xmr=str(sub.amount_xmr),
-        amount_atomic=sub.amount_atomic, interval_days=sub.interval_days,
-        status=sub.status.value, grace_days_soft=sub.grace_days_soft,
+        id=str(sub.id),
+        merchant_id=str(sub.merchant_id),
+        customer_id=str(sub.customer_id),
+        amount_xmr=str(sub.amount_xmr),
+        amount_atomic=sub.amount_atomic,
+        interval_days=sub.interval_days,
+        status=sub.status.value,
+        grace_days_soft=sub.grace_days_soft,
         grace_days_hard=sub.grace_days_hard,
         billing_anchor_at=sub.billing_anchor_at.isoformat() if sub.billing_anchor_at else None,
         next_due_at=sub.next_due_at.isoformat() if sub.next_due_at else None,
@@ -93,9 +99,11 @@ def _sub_to_response(sub) -> SubscriptionResponse:
         trial_days=sub.trial_days,
         trial_end_at=sub.trial_end_at.isoformat() if sub.trial_end_at else None,
         prepaid_until=sub.prepaid_until.isoformat() if sub.prepaid_until else None,
-        metadata=sub.metadata_json, pending_changes=pending,
+        metadata=sub.metadata_json,
+        pending_changes=pending,
         has_pending_changes=has_pending,
-        created_at=sub.created_at.isoformat(), updated_at=sub.updated_at.isoformat(),
+        created_at=sub.created_at.isoformat(),
+        updated_at=sub.updated_at.isoformat(),
     )
 
 
@@ -143,10 +151,15 @@ async def create_subscription(
         raise HTTPException(status_code=400, detail="Invalid customer_id format.")
     try:
         sub = await subscription_service.create_subscription(
-            db=db, merchant=merchant, customer_id=customer_uuid,
-            amount_xmr_raw=body.amount_xmr, interval_days=body.interval_days,
-            grace_days_soft=body.grace_days_soft, grace_days_hard=body.grace_days_hard,
-            start_at=_parse_start_at(body.start_at), trial_days=body.trial_days,
+            db=db,
+            merchant=merchant,
+            customer_id=customer_uuid,
+            amount_xmr_raw=body.amount_xmr,
+            interval_days=body.interval_days,
+            grace_days_soft=body.grace_days_soft,
+            grace_days_hard=body.grace_days_hard,
+            start_at=_parse_start_at(body.start_at),
+            trial_days=body.trial_days,
             metadata=body.metadata,
         )
         await db.commit()
@@ -159,8 +172,7 @@ async def create_subscription(
 
     detail = await subscription_service.get_subscription(db, merchant.id, sub.id)
     resp = _sub_to_response(detail["subscription"])
-    return SubscriptionDetailResponse(
-        **resp.model_dump(), customer=detail["customer"], payments=detail["payments"])
+    return SubscriptionDetailResponse(**resp.model_dump(), customer=detail["customer"], payments=detail["payments"])
 
 
 @router.get("", response_model=SubscriptionCursorResponse)
@@ -191,8 +203,12 @@ async def list_subscriptions(
         base_query = base_query.where(Subscription.customer_id == customer_id)
 
     result = await paginate_cursor(
-        db=db, base_query=base_query, model=Subscription,
-        limit=limit, starting_after=starting_after, ending_before=ending_before,
+        db=db,
+        base_query=base_query,
+        model=Subscription,
+        limit=limit,
+        starting_after=starting_after,
+        ending_before=ending_before,
     )
 
     return SubscriptionCursorResponse(
@@ -212,8 +228,7 @@ async def get_subscription(
     except SubscriptionNotFoundError:
         raise HTTPException(status_code=404, detail=f"Subscription {subscription_id} not found.")
     resp = _sub_to_response(detail["subscription"])
-    return SubscriptionDetailResponse(
-        **resp.model_dump(), customer=detail["customer"], payments=detail["payments"])
+    return SubscriptionDetailResponse(**resp.model_dump(), customer=detail["customer"], payments=detail["payments"])
 
 
 @router.get("/{subscription_id}/renewal-log", response_model=RenewalLogCursorResponse)
@@ -241,15 +256,21 @@ async def get_renewal_log(
     )
 
     result = await paginate_cursor(
-        db=db, base_query=base_query, model=SubscriptionRenewalEvent,
-        limit=limit, starting_after=starting_after, ending_before=ending_before,
+        db=db,
+        base_query=base_query,
+        model=SubscriptionRenewalEvent,
+        limit=limit,
+        starting_after=starting_after,
+        ending_before=ending_before,
     )
 
     data = [
         RenewalEventResponse(
-            id=str(e.id), result=e.result,
+            id=str(e.id),
+            result=e.result,
             invoice_id=str(e.invoice_id) if e.invoice_id else None,
-            error_message=e.error_message, details=e.details,
+            error_message=e.error_message,
+            details=e.details,
             created_at=e.created_at.isoformat(),
         )
         for e in result["data"]
@@ -276,13 +297,15 @@ async def patch_subscription(
 
         sub = await update_subscription(db=db, sub=sub, **kwargs)
 
-        has_financial = any(k in body_data for k in ("amount_xmr", "interval_days", "grace_days_soft", "grace_days_hard"))
+        financial_keys = ("amount_xmr", "interval_days", "grace_days_soft", "grace_days_hard")
+        has_financial = any(k in body_data for k in financial_keys)
         if has_financial:
             payload = build_subscription_updated_payload(sub)
             payload["event"] = "subscription.updated"
             payload["timestamp"] = datetime.now(timezone.utc).isoformat()
             await webhook_service.queue_webhook(
-                db=db, merchant=merchant, event_type="subscription.updated", payload=payload)
+                db=db, merchant=merchant, event_type="subscription.updated", payload=payload
+            )
 
         await db.commit()
         await db.refresh(sub)
@@ -356,15 +379,19 @@ async def prepay_subscription(
     """Phase 8B: Pre-pay N periods with optional discount."""
     try:
         invoice = await create_prepay_invoice(
-            db=db, merchant=merchant,
-            subscription_id=subscription_id, periods=body.periods,
+            db=db,
+            merchant=merchant,
+            subscription_id=subscription_id,
+            periods=body.periods,
         )
         # Fire subscription.prepaid webhook
         sub_stmt = select(Subscription).where(Subscription.id == subscription_id)
         sub = (await db.execute(sub_stmt)).scalar_one()
         await webhook_service.dispatch_subscription_event(
-            db=db, event_type="subscription.prepaid",
-            subscription=sub, invoice_id=invoice.id,
+            db=db,
+            event_type="subscription.prepaid",
+            subscription=sub,
+            invoice_id=invoice.id,
         )
         await db.commit()
     except SubscriptionNotFoundError as exc:
@@ -378,9 +405,7 @@ async def prepay_subscription(
 
     meta = invoice.metadata_json or {}
     # Re-fetch subscription for prepaid_until
-    sub = (await db.execute(
-        select(Subscription).where(Subscription.id == subscription_id)
-    )).scalar_one()
+    sub = (await db.execute(select(Subscription).where(Subscription.id == subscription_id))).scalar_one()
 
     return PrepayResponse(
         subscription_id=str(subscription_id),

@@ -13,14 +13,10 @@ Usage:
 import uuid
 from datetime import datetime, timedelta, timezone
 
-import httpx
 import pytest
 
 from tests.conftest import (
     auth_headers,
-    db_execute,
-    db_fetchrow,
-    db_fetch,
 )
 
 BASE_URL = "http://127.0.0.1:8013"
@@ -36,8 +32,7 @@ async def _create_customer(client, api_key, ext_id=None):
     return resp.json()
 
 
-async def _create_subscription(client, api_key, customer_id, amount="0.5",
-                                interval=30, start_at=None, trial_days=None):
+async def _create_subscription(client, api_key, customer_id, amount="0.5", interval=30, start_at=None, trial_days=None):
     payload = {
         "customer_id": customer_id,
         "amount_xmr": amount,
@@ -59,7 +54,6 @@ async def _create_subscription(client, api_key, customer_id, amount="0.5",
 
 @pytest.mark.asyncio
 class TestAnalytics:
-
     async def test_revenue_unauthenticated(self, client):
         """Analytics endpoints require auth."""
         resp = await client.get("/v1/analytics/revenue")
@@ -105,7 +99,6 @@ class TestAnalytics:
 
 @pytest.mark.asyncio
 class TestSSE:
-
     async def test_sse_endpoint_nonexistent_invoice(self, client):
         """SSE endpoint returns 404 for non-existent invoice."""
         fake_id = str(uuid.uuid4())
@@ -126,13 +119,15 @@ class TestSSE:
 
 @pytest.mark.asyncio
 class TestTrialPeriods:
-
     async def test_create_with_trial(self, client, test_merchant):
         """Subscription with trial_days starts in trialing status."""
         key = test_merchant["api_key_live"]
         cust = await _create_customer(client, key)
         sub = await _create_subscription(
-            client, key, cust["id"], trial_days=14,
+            client,
+            key,
+            cust["id"],
+            trial_days=14,
         )
         assert sub["status"] == "trialing"
         assert sub["trial_days"] == 14
@@ -145,13 +140,17 @@ class TestTrialPeriods:
         key = test_merchant["api_key_live"]
         cust = await _create_customer(client, key)
         sub = await _create_subscription(
-            client, key, cust["id"], trial_days=7,
+            client,
+            key,
+            cust["id"],
+            trial_days=7,
         )
         assert sub["status"] == "trialing"
 
         resp = await client.post(
             f"/v1/subscriptions/{sub['id']}/cancel",
-            json={}, headers=auth_headers(key),
+            json={},
+            headers=auth_headers(key),
         )
         assert resp.status_code == 200
         assert resp.json()["status"] == "cancelled"
@@ -161,11 +160,15 @@ class TestTrialPeriods:
         key = test_merchant["api_key_live"]
         cust = await _create_customer(client, key)
         sub = await _create_subscription(
-            client, key, cust["id"], trial_days=7,
+            client,
+            key,
+            cust["id"],
+            trial_days=7,
         )
         resp = await client.post(
             f"/v1/subscriptions/{sub['id']}/pause",
-            json={}, headers=auth_headers(key),
+            json={},
+            headers=auth_headers(key),
         )
         assert resp.status_code == 409
 
@@ -180,7 +183,9 @@ class TestTrialPeriods:
             "trial_days": 999,
         }
         resp = await client.post(
-            "/v1/subscriptions", json=payload, headers=auth_headers(key),
+            "/v1/subscriptions",
+            json=payload,
+            headers=auth_headers(key),
         )
         assert resp.status_code == 422  # Pydantic validation
 
@@ -195,7 +200,9 @@ class TestTrialPeriods:
             "trial_days": 0,
         }
         resp = await client.post(
-            "/v1/subscriptions", json=payload, headers=auth_headers(key),
+            "/v1/subscriptions",
+            json=payload,
+            headers=auth_headers(key),
         )
         assert resp.status_code == 422  # Pydantic validation
 
@@ -207,7 +214,6 @@ class TestTrialPeriods:
 
 @pytest.mark.asyncio
 class TestPrepay:
-
     async def test_prepay_no_plans_configured(self, client, test_merchant):
         """Prepay fails when merchant has no prepay_plans."""
         key = test_merchant["api_key_live"]
@@ -215,7 +221,10 @@ class TestPrepay:
         # Use future start to avoid first-invoice collision
         future = (datetime.now(timezone.utc) + timedelta(days=60)).isoformat()
         sub = await _create_subscription(
-            client, key, cust["id"], start_at=future,
+            client,
+            key,
+            cust["id"],
+            start_at=future,
         )
         resp = await client.post(
             f"/v1/subscriptions/{sub['id']}/prepay",
@@ -250,10 +259,12 @@ class TestPrepay:
         # Duplicate periods
         resp = await client.patch(
             "/v1/merchants/me",
-            json={"prepay_plans": [
-                {"periods": 3, "discount_pct": 10},
-                {"periods": 3, "discount_pct": 20},
-            ]},
+            json={
+                "prepay_plans": [
+                    {"periods": 3, "discount_pct": 10},
+                    {"periods": 3, "discount_pct": 20},
+                ]
+            },
             headers=auth_headers(key),
         )
         assert resp.status_code == 400
@@ -275,7 +286,12 @@ class TestPrepay:
         cust = await _create_customer(client, key)
         future = (datetime.now(timezone.utc) + timedelta(days=60)).isoformat()
         sub = await _create_subscription(
-            client, key, cust["id"], amount="1.0", interval=30, start_at=future,
+            client,
+            key,
+            cust["id"],
+            amount="1.0",
+            interval=30,
+            start_at=future,
         )
         assert sub["status"] == "active"
 
@@ -318,11 +334,15 @@ class TestPrepay:
         cust = await _create_customer(client, key)
         future = (datetime.now(timezone.utc) + timedelta(days=60)).isoformat()
         sub = await _create_subscription(
-            client, key, cust["id"], start_at=future,
+            client,
+            key,
+            cust["id"],
+            start_at=future,
         )
         await client.post(
             f"/v1/subscriptions/{sub['id']}/cancel",
-            json={}, headers=auth_headers(key),
+            json={},
+            headers=auth_headers(key),
         )
 
         # Try prepay
@@ -347,7 +367,10 @@ class TestPrepay:
         cust = await _create_customer(client, key)
         future = (datetime.now(timezone.utc) + timedelta(days=60)).isoformat()
         sub = await _create_subscription(
-            client, key, cust["id"], start_at=future,
+            client,
+            key,
+            cust["id"],
+            start_at=future,
         )
 
         # First prepay
@@ -381,7 +404,10 @@ class TestPrepay:
         cust = await _create_customer(client, key)
         future = (datetime.now(timezone.utc) + timedelta(days=60)).isoformat()
         sub = await _create_subscription(
-            client, key, cust["id"], start_at=future,
+            client,
+            key,
+            cust["id"],
+            start_at=future,
         )
 
         # Try prepay with 6 periods (not configured)

@@ -20,7 +20,6 @@ from app.db.models import (
     Subscription,
     SubscriptionPayment,
     SubscriptionRenewalEvent,
-    SubscriptionStatus,
 )
 from app.services.invoice_service import invoice_service
 from app.services.subscription_exceptions import SkipRenewalError
@@ -104,7 +103,8 @@ def apply_pending_changes(sub: Subscription) -> dict | None:
 
 
 async def create_renewal_invoice(
-    db: AsyncSession, sub: Subscription,
+    db: AsyncSession,
+    sub: Subscription,
 ) -> tuple[Invoice, SubscriptionPayment] | None:
     """Public wrapper — loads merchant and delegates."""
     merchant_stmt = select(Merchant).where(Merchant.id == sub.merchant_id)
@@ -116,7 +116,9 @@ async def create_renewal_invoice(
 
 
 async def _create_renewal_invoice(
-    db: AsyncSession, sub: Subscription, merchant: Merchant,
+    db: AsyncSession,
+    sub: Subscription,
+    merchant: Merchant,
 ) -> tuple[Invoice, SubscriptionPayment]:
     """Create invoice + subscription_payment for one period.
 
@@ -158,45 +160,65 @@ async def _create_renewal_invoice(
         period_end = period_start + timedelta(days=sub.interval_days)
         logger.info("Pending changes applied for sub %s at renewal", sub.id)
         await log_renewal_event(
-            db, sub.id, "pending_applied", details=applied_changes,
+            db,
+            sub.id,
+            "pending_applied",
+            details=applied_changes,
         )
 
     # 4. Create invoice
     expires_in = (sub.grace_days_soft + sub.grace_days_hard) * 86400
     invoice = await invoice_service.create_invoice(
-        db=db, merchant=merchant, amount_xmr_raw=sub.amount_xmr,
+        db=db,
+        merchant=merchant,
+        amount_xmr_raw=sub.amount_xmr,
         description=f"Subscription {sub.id}",
         expires_in=max(expires_in, 600),
-        metadata={"subscription_id": str(sub.id),
-                  "period_start": period_start.isoformat(),
-                  "period_end": period_end.isoformat()},
+        metadata={
+            "subscription_id": str(sub.id),
+            "period_start": period_start.isoformat(),
+            "period_end": period_end.isoformat(),
+        },
     )
 
     # 5. Link subscription_payment
     sp = SubscriptionPayment(
-        id=uuid.uuid4(), subscription_id=sub.id, invoice_id=invoice.id,
-        period_start=period_start, period_end=period_end,
+        id=uuid.uuid4(),
+        subscription_id=sub.id,
+        invoice_id=invoice.id,
+        period_start=period_start,
+        period_end=period_end,
     )
     db.add(sp)
 
     # 6. Advance next_due via billing anchor
     sub.next_due_at = calculate_next_due(
-        anchor=sub.billing_anchor_at, interval_days=sub.interval_days,
+        anchor=sub.billing_anchor_at,
+        interval_days=sub.interval_days,
     )
 
     # 7. Audit
-    db.add(AuditLog(
-        merchant_id=sub.merchant_id, action="subscription.renewed",
-        entity_type="subscription", entity_id=sub.id,
-        details={"invoice_id": str(invoice.id),
-                 "period_start": period_start.isoformat(),
-                 "period_end": period_end.isoformat(),
-                 "pending_applied": applied_changes is not None},
-    ))
+    db.add(
+        AuditLog(
+            merchant_id=sub.merchant_id,
+            action="subscription.renewed",
+            entity_type="subscription",
+            entity_id=sub.id,
+            details={
+                "invoice_id": str(invoice.id),
+                "period_start": period_start.isoformat(),
+                "period_end": period_end.isoformat(),
+                "pending_applied": applied_changes is not None,
+            },
+        )
+    )
 
     # 8. Phase 6C: log success event
     await log_renewal_event(
-        db, sub.id, "success", invoice_id=invoice.id,
+        db,
+        sub.id,
+        "success",
+        invoice_id=invoice.id,
         details={
             "period_start": period_start.isoformat(),
             "period_end": period_end.isoformat(),
@@ -206,6 +228,5 @@ async def _create_renewal_invoice(
 
     await db.flush()
 
-    logger.info("Renewal: sub=%s, invoice=%s, %s→%s",
-                sub.id, invoice.id, period_start.date(), period_end.date())
+    logger.info("Renewal: sub=%s, invoice=%s, %s→%s", sub.id, invoice.id, period_start.date(), period_end.date())
     return invoice, sp

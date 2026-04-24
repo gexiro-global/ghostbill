@@ -47,6 +47,7 @@ class TorProxy:
         """Check if URL is a .onion address."""
         try:
             from urllib.parse import urlparse
+
             parsed = urlparse(url)
             return parsed.hostname is not None and parsed.hostname.endswith(".onion")
         except Exception:
@@ -90,9 +91,7 @@ class TorProxy:
         """
         client_kwargs = self._get_client_kwargs(timeout)
         async with httpx.AsyncClient(**client_kwargs) as client:
-            response = await client.post(
-                url, content=content, headers=headers, **kwargs
-            )
+            response = await client.post(url, content=content, headers=headers, **kwargs)
         if self._enabled:
             logger.debug("POST via Tor: %s -> %d", url, response.status_code)
         return response

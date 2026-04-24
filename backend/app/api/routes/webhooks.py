@@ -90,26 +90,35 @@ class DLQRetryResponse(BaseModel):
 
 def _delivery_to_response(d) -> WebhookDeliveryResponse:
     return WebhookDeliveryResponse(
-        id=str(d.id), merchant_id=str(d.merchant_id),
+        id=str(d.id),
+        merchant_id=str(d.merchant_id),
         invoice_id=str(d.invoice_id) if d.invoice_id else None,
-        event_type=d.event_type, payload=d.payload, url=d.url,
-        status=d.status.value, attempts=d.attempts, max_attempts=d.max_attempts,
+        event_type=d.event_type,
+        payload=d.payload,
+        url=d.url,
+        status=d.status.value,
+        attempts=d.attempts,
+        max_attempts=d.max_attempts,
         last_attempt_at=d.last_attempt_at.isoformat() if d.last_attempt_at else None,
         next_retry_at=d.next_retry_at.isoformat() if d.next_retry_at else None,
-        response_code=d.response_code, response_body=d.response_body,
+        response_code=d.response_code,
+        response_body=d.response_body,
         created_at=d.created_at.isoformat() if d.created_at else None,
     )
 
 
 def _dlq_to_response(entry: WebhookDeadLetter) -> DLQEntryResponse:
     return DLQEntryResponse(
-        id=str(entry.id), delivery_id=str(entry.delivery_id),
-        event_type=entry.event_type, payload=entry.payload,
+        id=str(entry.id),
+        delivery_id=str(entry.delivery_id),
+        event_type=entry.event_type,
+        payload=entry.payload,
         original_created_at=entry.original_created_at.isoformat(),
         dead_lettered_at=entry.dead_lettered_at.isoformat(),
         retry_count=entry.retry_count,
         last_retry_at=entry.last_retry_at.isoformat() if entry.last_retry_at else None,
-        last_error=entry.last_error, resolved=entry.resolved,
+        last_error=entry.last_error,
+        resolved=entry.resolved,
         resolved_at=entry.resolved_at.isoformat() if entry.resolved_at else None,
     )
 
@@ -129,14 +138,17 @@ async def list_dead_letters(
     """List dead-lettered webhooks for the authenticated merchant."""
     validate_cursor_params(starting_after, ending_before)
 
-    base_query = select(WebhookDeadLetter).where(
-        WebhookDeadLetter.merchant_id == merchant.id)
+    base_query = select(WebhookDeadLetter).where(WebhookDeadLetter.merchant_id == merchant.id)
     if resolved is not None:
         base_query = base_query.where(WebhookDeadLetter.resolved == resolved)
 
     result = await paginate_cursor(
-        db=db, base_query=base_query, model=WebhookDeadLetter,
-        limit=limit, starting_after=starting_after, ending_before=ending_before,
+        db=db,
+        base_query=base_query,
+        model=WebhookDeadLetter,
+        limit=limit,
+        starting_after=starting_after,
+        ending_before=ending_before,
     )
 
     return DLQCursorResponse(
@@ -152,12 +164,14 @@ async def retry_dead_letter(
     db: AsyncSession = Depends(get_db),
 ):
     """Retry a dead-lettered webhook. Single attempt, no 7-retry cycle."""
-    entry = (await db.execute(
-        select(WebhookDeadLetter).where(
-            WebhookDeadLetter.id == dlq_id,
-            WebhookDeadLetter.merchant_id == merchant.id,
+    entry = (
+        await db.execute(
+            select(WebhookDeadLetter).where(
+                WebhookDeadLetter.id == dlq_id,
+                WebhookDeadLetter.merchant_id == merchant.id,
+            )
         )
-    )).scalar_one_or_none()
+    ).scalar_one_or_none()
 
     if entry is None:
         raise HTTPException(status_code=404, detail="Dead letter entry not found.")
@@ -166,7 +180,8 @@ async def retry_dead_letter(
 
     # Create new delivery from DLQ payload
     new_delivery = await webhook_service.queue_webhook(
-        db=db, merchant=merchant, event_type=entry.event_type, payload=entry.payload)
+        db=db, merchant=merchant, event_type=entry.event_type, payload=entry.payload
+    )
 
     if new_delivery is None:
         raise HTTPException(status_code=400, detail="Webhook URL not configured.")
@@ -179,8 +194,10 @@ async def retry_dead_letter(
     await db.commit()
 
     return DLQRetryResponse(
-        id=str(entry.id), retry_count=entry.retry_count,
-        status="retrying", message="Webhook re-queued for delivery",
+        id=str(entry.id),
+        retry_count=entry.retry_count,
+        status="retrying",
+        message="Webhook re-queued for delivery",
     )
 
 
@@ -217,16 +234,19 @@ async def list_webhook_deliveries(
                 detail=f"Invalid status. Must be one of: {', '.join(s.value for s in WebhookStatus)}",
             )
 
-    base_query = select(WebhookDelivery).where(
-        WebhookDelivery.merchant_id == merchant.id)
+    base_query = select(WebhookDelivery).where(WebhookDelivery.merchant_id == merchant.id)
     if parsed_invoice_id is not None:
         base_query = base_query.where(WebhookDelivery.invoice_id == parsed_invoice_id)
     if parsed_status is not None:
         base_query = base_query.where(WebhookDelivery.status == parsed_status)
 
     result = await paginate_cursor(
-        db=db, base_query=base_query, model=WebhookDelivery,
-        limit=limit, starting_after=starting_after, ending_before=ending_before,
+        db=db,
+        base_query=base_query,
+        model=WebhookDelivery,
+        limit=limit,
+        starting_after=starting_after,
+        ending_before=ending_before,
     )
 
     return WebhookCursorResponse(
@@ -247,8 +267,7 @@ async def get_webhook_delivery(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid delivery ID format.")
 
-    stmt = select(WebhookDelivery).where(
-        WebhookDelivery.id == did, WebhookDelivery.merchant_id == merchant.id)
+    stmt = select(WebhookDelivery).where(WebhookDelivery.id == did, WebhookDelivery.merchant_id == merchant.id)
     delivery = (await db.execute(stmt)).scalar_one_or_none()
     if delivery is None:
         raise HTTPException(status_code=404, detail="Webhook delivery not found.")

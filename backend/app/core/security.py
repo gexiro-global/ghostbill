@@ -28,6 +28,7 @@ WEBHOOK_SECRET_LENGTH = 32  # 32 hex chars
 
 # ─── API Key Generation ─────────────────────────────────────────────────────
 
+
 def generate_api_key(environment: str = "live") -> str:
     """Generate a new API key.
 
@@ -49,6 +50,7 @@ def generate_api_key(environment: str = "live") -> str:
 
 
 # ─── Bcrypt Hash / Verify ───────────────────────────────────────────────────
+
 
 def hash_api_key(plain_key: str) -> str:
     """Hash an API key with bcrypt (cost >= 12).
@@ -89,6 +91,7 @@ def verify_api_key(plain_key: str, hashed_key: str) -> bool:
 
 # ─── HMAC-SHA256 (Webhooks) ─────────────────────────────────────────────────
 
+
 def hmac_sign(payload: bytes, secret: str) -> str:
     """Create HMAC-SHA256 signature for webhook payload.
 
@@ -125,6 +128,7 @@ def hmac_verify(payload: bytes, secret: str, signature: str) -> bool:
 
 # ─── Webhook Secret ─────────────────────────────────────────────────────────
 
+
 def generate_webhook_secret() -> str:
     """Generate a random webhook signing secret.
 
@@ -135,6 +139,7 @@ def generate_webhook_secret() -> str:
 
 
 # ─── Bearer Token Parsing ───────────────────────────────────────────────────
+
 
 def parse_bearer_token(authorization: str | None) -> str | None:
     """Extract token from 'Authorization: Bearer <token>' header.

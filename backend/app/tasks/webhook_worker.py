@@ -17,7 +17,6 @@ import asyncio
 import logging
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Merchant
 from app.db.session import async_session
@@ -32,6 +31,7 @@ BATCH_SIZE: int = 50  # max deliveries per cycle
 
 
 # ─── Background Task ────────────────────────────────────────────────────────
+
 
 async def webhook_worker_loop() -> None:
     """Background loop: process pending webhook deliveries.
@@ -51,9 +51,7 @@ async def webhook_worker_loop() -> None:
 
             async with async_session() as db:
                 # Fetch pending deliveries
-                deliveries = await webhook_service.get_pending_deliveries(
-                    db, limit=BATCH_SIZE
-                )
+                deliveries = await webhook_service.get_pending_deliveries(db, limit=BATCH_SIZE)
 
                 if not deliveries:
                     await asyncio.sleep(WORKER_INTERVAL)
@@ -62,9 +60,7 @@ async def webhook_worker_loop() -> None:
                 for delivery in deliveries:
                     try:
                         # Load merchant for webhook_secret
-                        merchant_stmt = select(Merchant).where(
-                            Merchant.id == delivery.merchant_id
-                        )
+                        merchant_stmt = select(Merchant).where(Merchant.id == delivery.merchant_id)
                         merchant_result = await db.execute(merchant_stmt)
                         merchant = merchant_result.scalar_one_or_none()
 
@@ -75,27 +71,22 @@ async def webhook_worker_loop() -> None:
                                 delivery.merchant_id,
                             )
                             from app.db.models import WebhookStatus
+
                             delivery.status = WebhookStatus.failed
                             delivery.next_retry_at = None
                             await db.flush()
                             continue
 
                         # Attempt delivery
-                        success = await webhook_service.attempt_delivery(
-                            delivery, merchant.webhook_secret
-                        )
+                        success = await webhook_service.attempt_delivery(delivery, merchant.webhook_secret)
 
                         # Process result (update status, schedule retry if needed)
-                        await webhook_service.process_delivery_result(
-                            db, delivery, success
-                        )
+                        await webhook_service.process_delivery_result(db, delivery, success)
 
                         processed += 1
 
                     except Exception:
-                        logger.exception(
-                            "Error processing webhook delivery %s", delivery.id
-                        )
+                        logger.exception("Error processing webhook delivery %s", delivery.id)
 
                 await db.commit()
 

@@ -122,6 +122,7 @@ export default function SubscriptionDetailPage() {
   }
 
   const isTerminal = sub.status === "cancelled" || sub.status === "expired";
+  const isTrialing = sub.status === "trialing";
   const canPause = sub.status === "active";
   const canResume = sub.status === "paused";
   const canCancel = !isTerminal;
@@ -275,6 +276,14 @@ export default function SubscriptionDetailPage() {
                   {sub.grace_days_soft}d / {sub.grace_days_hard}d
                 </p>
               </div>
+              {sub.trial_days && (
+                <div>
+                  <p className="text-gb-text-secondary">Trial Period</p>
+                  <p className="text-purple-400 font-mono">
+                    {sub.trial_days}d{sub.trial_end_at ? " (ends " + new Date(sub.trial_end_at).toLocaleDateString("en-US", { month: "short", day: "numeric" }) + ")" : ""}
+                  </p>
+                </div>
+              )}
               <div>
                 <p className="text-gb-text-secondary">Created</p>
                 <p className="text-gb-text-primary">
@@ -425,6 +434,15 @@ export default function SubscriptionDetailPage() {
                 <p className="text-gb-text-secondary">
                   This subscription expired due to non-payment after the grace
                   period.
+                </p>
+              </div>
+            )}
+            {sub.status === "trialing" && (
+              <div className="flex items-start gap-2 text-sm">
+                <Clock className="w-4 h-4 text-purple-400 mt-0.5 shrink-0" />
+                <p className="text-gb-text-secondary">
+                  Trial period active ({sub.trial_days} days). No invoices until trial ends
+                  {sub.trial_end_at ? ` on ${formatDate(sub.trial_end_at)}` : ""}.
                 </p>
               </div>
             )}

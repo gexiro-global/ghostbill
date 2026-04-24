@@ -1,4 +1,7 @@
-"""Pydantic schemas for subscription API routes."""
+"""Pydantic schemas for subscription API routes.
+
+Phase 8A: +trial_days in create request, +trial fields in response.
+"""
 
 from pydantic import BaseModel, Field
 
@@ -10,6 +13,7 @@ class SubscriptionCreateRequest(BaseModel):
     grace_days_soft: int = Field(default=3, ge=0, description="Days before past_due")
     grace_days_hard: int = Field(default=7, ge=0, description="Days before expired")
     start_at: str | None = Field(default=None, description="ISO datetime, default=now")
+    trial_days: int | None = Field(default=None, ge=1, le=365, description="Trial period in days (Phase 8A)")
     metadata: dict | None = Field(default=None, description="Arbitrary metadata")
 
 
@@ -43,6 +47,8 @@ class SubscriptionResponse(BaseModel):
     billing_anchor_at: str | None = None
     next_due_at: str | None = None
     cancelled_at: str | None = None
+    trial_days: int | None = None  # Phase 8A
+    trial_end_at: str | None = None  # Phase 8A
     metadata: dict | None = None
     pending_changes: PendingChangesResponse | None = None
     has_pending_changes: bool = False

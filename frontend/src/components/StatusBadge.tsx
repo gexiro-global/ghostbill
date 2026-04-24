@@ -68,6 +68,10 @@ const statusConfig: Record<string, { label: string; color: string }> = {
 
 // Subscription-specific overrides for shared keys (cancelled, expired)
 const subscriptionOverrides: Record<string, { label: string; color: string }> = {
+  trialing: {
+    label: "Trial",
+    color: "bg-purple-500/15 text-purple-400 border-purple-500/30",
+  },
   cancelled: {
     label: "— Cancelled",
     color: "bg-gb-text-secondary/15 text-gb-text-secondary border-gb-text-secondary/30",

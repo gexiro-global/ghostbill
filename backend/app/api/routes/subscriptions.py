@@ -86,6 +86,8 @@ def _sub_to_response(sub) -> SubscriptionResponse:
         billing_anchor_at=sub.billing_anchor_at.isoformat() if sub.billing_anchor_at else None,
         next_due_at=sub.next_due_at.isoformat() if sub.next_due_at else None,
         cancelled_at=sub.cancelled_at.isoformat() if sub.cancelled_at else None,
+        trial_days=sub.trial_days,
+        trial_end_at=sub.trial_end_at.isoformat() if sub.trial_end_at else None,
         metadata=sub.metadata_json, pending_changes=pending,
         has_pending_changes=has_pending,
         created_at=sub.created_at.isoformat(), updated_at=sub.updated_at.isoformat(),
@@ -139,7 +141,8 @@ async def create_subscription(
             db=db, merchant=merchant, customer_id=customer_uuid,
             amount_xmr_raw=body.amount_xmr, interval_days=body.interval_days,
             grace_days_soft=body.grace_days_soft, grace_days_hard=body.grace_days_hard,
-            start_at=_parse_start_at(body.start_at), metadata=body.metadata,
+            start_at=_parse_start_at(body.start_at), trial_days=body.trial_days,
+            metadata=body.metadata,
         )
         await db.commit()
     except SubscriptionNotFoundError as exc:

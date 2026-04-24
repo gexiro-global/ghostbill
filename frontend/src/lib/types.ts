@@ -16,7 +16,8 @@ export type SubscriptionStatus =
   | "paused"
   | "past_due"
   | "cancelled"
-  | "expired";
+  | "expired"
+  | "trialing";
 
 export type WebhookStatus = "pending" | "delivered" | "failed" | "dead_lettered";
 
@@ -37,7 +38,9 @@ export type WebhookEvent =
   | "subscription.updated"
   | "subscription.paused"
   | "subscription.resumed"
-  | "subscription.expired";
+  | "subscription.expired"
+  | "subscription.trial_started"
+  | "subscription.trial_ended";
 
 export type NetworkMode = "live" | "test";
 
@@ -135,6 +138,8 @@ export interface Subscription {
   metadata: Record<string, unknown> | null;
   pending_changes: PendingChanges | null;
   has_pending_changes: boolean;
+  trial_days: number | null;
+  trial_end_at: string | null;
   customer?: CustomerSummary;
   payments?: SubscriptionPaymentInfo[];
 }

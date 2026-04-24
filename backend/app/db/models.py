@@ -50,6 +50,7 @@ class SubscriptionStatus(str, enum.Enum):
     past_due = "past_due"
     cancelled = "cancelled"
     expired = "expired"
+    trialing = "trialing"  # Phase 8A
 
 
 class WebhookStatus(str, enum.Enum):
@@ -248,6 +249,11 @@ class Subscription(Base):
         DateTime(timezone=True), nullable=True
     )
     cancelled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Phase 8A: Trial periods
+    trial_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    trial_end_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     metadata_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

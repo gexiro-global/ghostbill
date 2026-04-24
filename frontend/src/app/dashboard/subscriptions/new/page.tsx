@@ -27,13 +27,14 @@ export default function NewSubscriptionPage() {
   const [graceSoft, setGraceSoft] = useState("3");
   const [graceHard, setGraceHard] = useState("7");
   const [metadata, setMetadata] = useState("");
+  const [trialDays, setTrialDays] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     api
-      .get<CustomerListResponse>("/customers?limit=100&offset=0")
-      .then((d) => setCustomers(d.customers))
+      .get<CursorResponse<Customer>>("/customers?limit=100")
+      .then((d) => setCustomers(d.data))
       .catch(() => {});
     api
       .get<Price>("/price")
@@ -94,6 +95,10 @@ export default function NewSubscriptionPage() {
         grace_days_hard: hard,
         metadata: parsedMeta,
       };
+      const td = parseInt(trialDays);
+      if (!isNaN(td) && td > 0) {
+        body.trial_days = td;
+      }
 
       const sub = await api.post<Subscription>("/subscriptions", body);
       router.push(`/dashboard/subscriptions/${sub.id}`);
@@ -249,6 +254,23 @@ export default function NewSubscriptionPage() {
           <p className="text-xs text-gb-text-secondary/60 mt-1.5">
             Soft: subscription moves to past_due. Hard: subscription is cancelled.
           </p>
+        </div>
+
+        {/* Trial Period (Phase 8A) */}
+        <div>
+          <label className="block text-sm font-medium text-gb-text-secondary mb-1.5">
+            Trial Period
+            <span className="text-gb-text-secondary/50 ml-1">(optional, days)</span>
+          </label>
+          <input
+            type="number"
+            min="0"
+            max="365"
+            value={trialDays}
+            onChange={(e) => setTrialDays(e.target.value)}
+            placeholder="0 (no trial)"
+            className="gb-input w-full font-mono"
+          />
         </div>
 
         {/* Metadata */}

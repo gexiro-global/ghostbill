@@ -11,7 +11,7 @@ Phase 6B: fires subscription.paused/resumed webhook events.
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -50,7 +50,8 @@ class SubscriptionService:
         self, db: AsyncSession, merchant: Merchant,
         customer_id: uuid.UUID, amount_xmr_raw: str | float | Decimal,
         interval_days: int, grace_days_soft: int = 3, grace_days_hard: int = 7,
-        start_at: datetime | None = None, metadata: dict[str, Any] | None = None,
+        start_at: datetime | None = None, trial_days: int | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> Subscription:
         """Create new subscription and optionally first invoice."""
         cust = (await db.execute(
@@ -75,21 +76,34 @@ class SubscriptionService:
         now = datetime.now(timezone.utc)
         next_due = start_at if start_at else now
 
+        # Phase 8A: Trial period handling
+        is_trial = trial_days is not None and trial_days > 0
+        if is_trial:
+            initial_status = SubscriptionStatus.trialing
+            trial_end = now + timedelta(days=trial_days)
+        else:
+            initial_status = SubscriptionStatus.active
+            trial_end = None
+
         sub = Subscription(
             id=uuid.uuid4(), merchant_id=merchant.id, customer_id=customer_id,
             amount_xmr=amount_xmr, amount_atomic=xmr_to_atomic(amount_xmr),
-            interval_days=interval_days, status=SubscriptionStatus.active,
+            interval_days=interval_days, status=initial_status,
             grace_days_soft=grace_days_soft, grace_days_hard=grace_days_hard,
-            next_due_at=next_due, metadata_json=metadata,
-            billing_anchor_at=next_due,
+            next_due_at=trial_end if is_trial else next_due,
+            metadata_json=metadata, billing_anchor_at=next_due,
+            trial_days=trial_days if is_trial else None,
+            trial_end_at=trial_end,
         )
         db.add(sub)
         await db.flush()
 
-        logger.info("Subscription created: %s, merchant=%s, amount=%s XMR",
-                    sub.id, merchant.id, amount_xmr)
+        logger.info("Subscription created: %s, merchant=%s, amount=%s XMR, trial=%s",
+                    sub.id, merchant.id, amount_xmr, trial_days if is_trial else "none")
 
-        if next_due <= now:
+        if is_trial:
+            await self._fire_lifecycle_event(db, "subscription.trial_started", sub)
+        elif next_due <= now:
             try:
                 await _create_renewal_invoice(db, sub, merchant)
             except (WalletUnavailableError, SkipRenewalError) as exc:

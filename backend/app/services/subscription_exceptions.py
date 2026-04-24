@@ -24,6 +24,10 @@ VALID_TRANSITIONS: dict[SubscriptionStatus, list[SubscriptionStatus]] = {
         SubscriptionStatus.expired,
         SubscriptionStatus.cancelled,
     ],
+    SubscriptionStatus.trialing: [  # Phase 8A
+        SubscriptionStatus.active,
+        SubscriptionStatus.cancelled,
+    ],
     SubscriptionStatus.cancelled: [],
     SubscriptionStatus.expired: [],
 }

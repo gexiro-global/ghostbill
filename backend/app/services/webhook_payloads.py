@@ -20,7 +20,7 @@ RETRY_DELAYS: list[int] = [60, 300, 1800, 7200, 43200, 86400]
 JITTER_MIN: float = 0.05
 JITTER_MAX: float = 0.2
 
-# Valid event types (17 total — Phase 6B)
+# Valid event types (19 total — Phase 8A)
 VALID_EVENTS: list[str] = [
     "payment.detected", "payment.confirmed", "payment.orphaned",
     "invoice.paid", "invoice.expired", "invoice.partially_paid",
@@ -31,6 +31,8 @@ VALID_EVENTS: list[str] = [
     "subscription.paused",     # Phase 6B
     "subscription.resumed",    # Phase 6B
     "subscription.expired",    # Phase 6B
+    "subscription.trial_started", # Phase 8A
+    "subscription.trial_ended",   # Phase 8A
 ]
 
 

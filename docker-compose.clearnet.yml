@@ -1,0 +1,42 @@
+# docker-compose.clearnet.yml
+# Clearnet override — adds nginx reverse proxy to the base stack.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.clearnet.yml up -d
+#
+# Prerequisites:
+#   1. SSL certs in nginx/certs/ (origin.crt + origin.key)
+#   2. Nginx config in nginx/conf/ghostbill.conf
+#   3. DNS records pointing to your server
+#
+# To stop clearnet only (Tor unaffected):
+#   docker compose -f docker-compose.yml -f docker-compose.clearnet.yml stop nginx
+
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: ghostbill_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf/ghostbill.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    networks:
+      - ghostbill_net
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  ghostbill_net:
+    name: ghostbill_net
+    external: true

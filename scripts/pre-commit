@@ -5,6 +5,8 @@
 
 set -e
 
+RUFF="/usr/local/bin/ruff"
+
 STAGED_PY=$(git diff --cached --name-only --diff-filter=ACM | grep '\.py$' || true)
 
 if [ -z "$STAGED_PY" ]; then
@@ -13,18 +15,18 @@ fi
 
 echo "[pre-commit] Checking $(echo "$STAGED_PY" | wc -l) Python file(s)..."
 
-if ! command -v ruff &> /dev/null; then
-    echo "[pre-commit] ERROR: ruff not found. Install: pip install ruff"
+if [ ! -x "$RUFF" ]; then
+    echo "[pre-commit] ERROR: ruff not found at $RUFF. Install: pip install ruff"
     exit 1
 fi
 
-echo "$STAGED_PY" | xargs ruff check --no-cache --config backend/pyproject.toml
+echo "$STAGED_PY" | xargs $RUFF check --no-cache --config backend/pyproject.toml
 if [ $? -ne 0 ]; then
     echo "[pre-commit] FAILED: ruff check found errors. Fix them before committing."
     exit 1
 fi
 
-echo "$STAGED_PY" | xargs ruff format --check --no-cache --config backend/pyproject.toml
+echo "$STAGED_PY" | xargs $RUFF format --check --no-cache --config backend/pyproject.toml
 if [ $? -ne 0 ]; then
     echo "[pre-commit] FAILED: ruff format check failed. Run: ruff format backend/app/ tests/"
     exit 1

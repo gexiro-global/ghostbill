@@ -1,11 +1,26 @@
 "use client";
 import { useEffect, useState } from "react";
-import { FileText, Wallet, TrendingUp, Clock, Plus, AlertTriangle } from "lucide-react";
+import { FileText, Wallet, TrendingUp, Clock, Plus, AlertTriangle, RefreshCw, Users } from "lucide-react";
 import Link from "next/link";
 import { api } from "@/lib/api";
-import { formatXMR, formatDate, timeAgo } from "@/lib/format";
+import { formatXMR, timeAgo } from "@/lib/format";
 import { StatusBadge } from "@/components/StatusBadge";
+import RevenueChart from "@/components/RevenueChart";
+import InvoiceStats from "@/components/InvoiceStats";
 import type { Merchant, Invoice, Payment, Price, CursorResponse } from "@/lib/types";
+
+interface SubscriptionMetrics {
+  active: number;
+  paused: number;
+  past_due: number;
+  cancelled: number;
+  expired: number;
+  total: number;
+  mrr_atomic: number;
+  mrr_xmr: string;
+  churn_30d: number;
+  new_30d: number;
+}
 
 interface MetricCardProps {
   title: string;
@@ -48,31 +63,28 @@ export default function DashboardPage() {
   const [price, setPrice] = useState<Price | null>(null);
   const [recentInvoices, setRecentInvoices] = useState<Invoice[]>([]);
   const [confirmedPayments, setConfirmedPayments] = useState<Payment[]>([]);
+  const [subMetrics, setSubMetrics] = useState<SubscriptionMetrics | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function fetchDashboard() {
       try {
-        const [merchantData, invoiceData, pendingData, priceData, paymentData] =
+        const [merchantData, invoiceData, pendingData, priceData, paymentData, subData] =
           await Promise.allSettled([
             api.get<Merchant>("/merchants/me"),
             api.get<CursorResponse<Invoice>>("/invoices?limit=5"),
             api.get<CursorResponse<Invoice>>("/invoices?status=pending&limit=100"),
             api.get<Price>("/price"),
             api.get<CursorResponse<Payment>>("/payments?status=confirmed&limit=100"),
+            api.get<SubscriptionMetrics>("/analytics/subscriptions"),
           ]);
 
         if (merchantData.status === "fulfilled") setMerchant(merchantData.value);
-        if (invoiceData.status === "fulfilled") {
-          setRecentInvoices(invoiceData.value.data);
-        }
-        if (pendingData.status === "fulfilled") {
-          setPendingCount(pendingData.value.data.length);
-        }
+        if (invoiceData.status === "fulfilled") setRecentInvoices(invoiceData.value.data);
+        if (pendingData.status === "fulfilled") setPendingCount(pendingData.value.data.length);
         if (priceData.status === "fulfilled") setPrice(priceData.value);
-        if (paymentData.status === "fulfilled") {
-          setConfirmedPayments(paymentData.value.data);
-        }
+        if (paymentData.status === "fulfilled") setConfirmedPayments(paymentData.value.data);
+        if (subData.status === "fulfilled") setSubMetrics(subData.value);
       } catch {
         // Individual errors handled by allSettled
       } finally {
@@ -83,7 +95,6 @@ export default function DashboardPage() {
     fetchDashboard();
   }, []);
 
-  // Calculate total received XMR from confirmed payments
   const totalReceivedAtomic = confirmedPayments.reduce((sum, p) => {
     try {
       return sum + BigInt(p.amount_atomic);
@@ -94,7 +105,6 @@ export default function DashboardPage() {
 
   const totalReceivedXmr = formatXMR(totalReceivedAtomic.toString(), 4);
 
-  // Format price display
   const priceDisplay = price ? `$${price.usd.toFixed(2)}` : "\u2014";
   const priceSubtitle = price
     ? price.stale
@@ -125,15 +135,8 @@ export default function DashboardPage() {
         </Link>
       </div>
 
-      {/* Metric cards */}
+      {/* Metric cards — row 1 */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <MetricCard
-          title="Confirmed Payments"
-          value={confirmedPayments.length.toString()}
-          subtitle="All time"
-          icon={<FileText className="w-5 h-5" />}
-          loading={loading}
-        />
         <MetricCard
           title="Total Received"
           value={`${totalReceivedXmr} XMR`}
@@ -156,6 +159,41 @@ export default function DashboardPage() {
           icon={<Clock className="w-5 h-5" />}
           loading={loading}
         />
+        <MetricCard
+          title="Active Subs"
+          value={subMetrics ? subMetrics.active.toString() : "\u2014"}
+          subtitle={subMetrics ? `MRR: ${parseFloat(subMetrics.mrr_xmr).toFixed(4)} XMR` : ""}
+          icon={<RefreshCw className="w-5 h-5" />}
+          loading={loading}
+        />
+      </div>
+
+      {/* Subscription metrics — row 2 */}
+      {subMetrics && subMetrics.total > 0 && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="gb-card py-3">
+            <p className="text-xs text-gb-text-secondary">Paused</p>
+            <p className="text-lg font-bold text-blue-400 mt-0.5">{subMetrics.paused}</p>
+          </div>
+          <div className="gb-card py-3">
+            <p className="text-xs text-gb-text-secondary">Past Due</p>
+            <p className="text-lg font-bold text-gb-warning mt-0.5">{subMetrics.past_due}</p>
+          </div>
+          <div className="gb-card py-3">
+            <p className="text-xs text-gb-text-secondary">New (30d)</p>
+            <p className="text-lg font-bold text-gb-success mt-0.5">+{subMetrics.new_30d}</p>
+          </div>
+          <div className="gb-card py-3">
+            <p className="text-xs text-gb-text-secondary">Churn (30d)</p>
+            <p className="text-lg font-bold text-gb-error mt-0.5">{subMetrics.churn_30d}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <RevenueChart />
+        <InvoiceStats />
       </div>
 
       {/* Recent invoices */}

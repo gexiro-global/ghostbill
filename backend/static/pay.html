@@ -486,22 +486,26 @@
  * GhostBill Payment Page
  * Standalone vanilla JS — zero external dependencies, Tor-safe
  * QR code generated server-side (segno library)
+ * Phase 7B: SSE real-time with polling fallback
  */
 (function() {
     'use strict';
 
-    // ── Config ──────────────────────────────────────────────────────────
+    // ── Config ──────────────────────────────────────────────────────────────────
     var POLL_INTERVAL = 5000;
     var COUNTDOWN_INTERVAL = 1000;
     var TERMINAL_STATUSES = ['paid', 'expired', 'cancelled'];
+    var SSE_RECONNECT_DELAY = 3000;
 
-    // ── State ───────────────────────────────────────────────────────────
+    // ── State ───────────────────────────────────────────────────────────────────
     var invoiceId = null;
     var invoiceData = null;
     var pollTimer = null;
     var countdownTimer = null;
+    var eventSource = null;
+    var sseActive = false;
 
-    // ── DOM refs ────────────────────────────────────────────────────────
+    // ── DOM refs ────────────────────────────────────────────────────────────────
     var els = {};
 
     function initRefs() {
@@ -519,7 +523,7 @@
         }
     }
 
-    // ── Extract invoice ID from URL ─────────────────────────────────────
+    // ── Extract invoice ID from URL ─────────────────────────────────────────
     function getInvoiceId() {
         var parts = window.location.pathname.split('/');
         for (var i = 0; i < parts.length; i++) {
@@ -530,7 +534,7 @@
         return null;
     }
 
-    // ── API call ────────────────────────────────────────────────────────
+    // ── API call ────────────────────────────────────────────────────────────────
     function fetchInvoice(callback) {
         var xhr = new XMLHttpRequest();
         xhr.open('GET', '/v1/invoices/' + invoiceId + '/public', true);
@@ -552,7 +556,7 @@
         xhr.send();
     }
 
-    // ── Render invoice ──────────────────────────────────────────────────
+    // ── Render invoice ──────────────────────────────────────────────────────────
     function render(data) {
         invoiceData = data;
         var st = data.status;
@@ -651,9 +655,10 @@
             }
         }
 
-        // Stop polling on terminal states
+        // Stop updates on terminal states
         if (isTerminal) {
             stopPolling();
+            disconnectSSE();
         }
     }
 
@@ -688,7 +693,7 @@
         return val.toFixed(12);
     }
 
-    // ── Countdown ───────────────────────────────────────────────────────
+    // ── Countdown ───────────────────────────────────────────────────────────────
     function startCountdown(expiresAt) {
         if (countdownTimer) clearInterval(countdownTimer);
 
@@ -703,7 +708,7 @@
                 els['countdown'].classList.add('urgent');
                 clearInterval(countdownTimer);
                 countdownTimer = null;
-                poll();
+                if (!sseActive) poll();
                 return;
             }
 
@@ -727,8 +732,59 @@
 
     function pad2(n) { return n < 10 ? '0' + n : '' + n; }
 
-    // ── Polling ─────────────────────────────────────────────────────────
+    // ── SSE (Phase 7B) ─────────────────────────────────────────────────────────
+    function connectSSE() {
+        if (typeof EventSource === 'undefined') {
+            // Browser doesn't support SSE — use polling
+            startPolling();
+            return;
+        }
+
+        var url = '/v1/invoices/' + invoiceId + '/events';
+        eventSource = new EventSource(url);
+        sseActive = true;
+
+        eventSource.addEventListener('update', function(e) {
+            try {
+                var data = JSON.parse(e.data);
+                render(data);
+            } catch (err) {
+                // Ignore parse errors
+            }
+        });
+
+        eventSource.addEventListener('close', function() {
+            disconnectSSE();
+        });
+
+        eventSource.onerror = function() {
+            // SSE failed — fall back to polling
+            disconnectSSE();
+            setTimeout(function() {
+                // Try SSE again after delay; if still fails, polling continues
+                if (!sseActive && TERMINAL_STATUSES.indexOf((invoiceData || {}).status) === -1) {
+                    connectSSE();
+                }
+            }, SSE_RECONNECT_DELAY);
+
+            // Start polling as immediate fallback
+            if (!pollTimer && TERMINAL_STATUSES.indexOf((invoiceData || {}).status) === -1) {
+                startPolling();
+            }
+        };
+    }
+
+    function disconnectSSE() {
+        if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+        }
+        sseActive = false;
+    }
+
+    // ── Polling (fallback) ───────────────────────────────────────────────────
     function startPolling() {
+        if (pollTimer) return;
         poll();
         pollTimer = setInterval(poll, POLL_INTERVAL);
     }
@@ -744,10 +800,15 @@
         fetchInvoice(function(err, data) {
             if (err) return;
             render(data);
+
+            // If SSE reconnects, stop polling
+            if (sseActive && pollTimer) {
+                stopPolling();
+            }
         });
     }
 
-    // ── Copy to clipboard ───────────────────────────────────────────────
+    // ── Copy to clipboard ───────────────────────────────────────────────────
     window.copyAddress = function() {
         if (!invoiceData || !invoiceData.address) return;
 
@@ -792,7 +853,7 @@
         }, 2000);
     }
 
-    // ── Init ────────────────────────────────────────────────────────────
+    // ── Init ────────────────────────────────────────────────────────────────────
     function init() {
         initRefs();
         invoiceId = getInvoiceId();
@@ -813,8 +874,9 @@
 
             render(data);
 
+            // Start real-time updates (SSE preferred, polling fallback)
             if (TERMINAL_STATUSES.indexOf(data.status) === -1) {
-                pollTimer = setInterval(poll, POLL_INTERVAL);
+                connectSSE();
             }
         });
     }

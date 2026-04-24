@@ -1,7 +1,7 @@
-"""
-Public invoice API routes (no authentication required).
+"""Public invoice API routes (no authentication required).
 
 GET /v1/invoices/{id}/public  — Public invoice data for payment page (api_router)
+GET /v1/invoices/{id}/events  — SSE stream for real-time payment updates (api_router)
 GET /pay/{id}                 — Serve pay.html payment page (pay_router)
 
 Security:
@@ -12,16 +12,20 @@ Security:
 - Security headers: CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy
 - UUID validation (404 for invalid format)
 - QR code generated server-side (segno library, SVG output)
+
+Phase 7B: SSE endpoint for real-time payment page updates.
 """
 
+import asyncio
 import io
+import json
 import logging
 import uuid
 from pathlib import Path
 
 import segno
 from fastapi import APIRouter, HTTPException, status
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
@@ -39,6 +43,13 @@ pay_router = APIRouter(tags=["public"])
 # Confirmations required for payment to be considered final
 CONFIRMATIONS_REQUIRED = 10
 
+# SSE config
+SSE_POLL_INTERVAL = 3  # seconds between DB checks
+SSE_MAX_DURATION = 1800  # 30 min max connection
+
+# Terminal invoice statuses (SSE auto-closes)
+TERMINAL_STATUSES = {"paid", "expired", "cancelled"}
+
 # Security headers for all public responses
 SECURITY_HEADERS = {
     "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:",
@@ -49,8 +60,6 @@ SECURITY_HEADERS = {
 }
 
 # Path to pay.html
-# In Docker: /app/app/api/routes/public_invoice.py → need 4x parent to reach /app/
-# /app/app/api/routes/ → /app/app/api/ → /app/app/ → /app/ → /app/static/pay.html
 PAY_HTML_PATH = Path(__file__).resolve().parent.parent.parent.parent / "static" / "pay.html"
 
 
@@ -66,21 +75,12 @@ def _validate_uuid(invoice_id: str) -> uuid.UUID:
 
 
 def _build_monero_uri(address: str, amount_xmr: str) -> str:
-    """Build Monero URI for wallet QR scanning.
-
-    Format: monero:<address>?tx_amount=<xmr>
-    No tx_description for privacy.
-    Compatible with Cake Wallet, Monerujo, Feather.
-    """
+    """Build Monero URI for wallet QR scanning."""
     return f"monero:{address}?tx_amount={amount_xmr}"
 
 
 def _generate_qr_svg(data: str) -> str:
-    """Generate QR code as SVG string using segno.
-
-    Returns SVG markup ready for inline embedding.
-    Error correction level M, scale 4, no border.
-    """
+    """Generate QR code as SVG string using segno."""
     try:
         qr = segno.make(data, error="m")
         buffer = io.BytesIO()
@@ -92,24 +92,15 @@ def _generate_qr_svg(data: str) -> str:
         return ""
 
 
-# ─── Public Invoice Data ─────────────────────────────────────────────────────
+# ── Shared data fetcher ─────────────────────────────────────────────────────
 
 
-@api_router.get("/invoices/{invoice_id}/public")
-async def get_public_invoice(invoice_id: str):
-    """Get limited invoice data for public payment page.
+async def _fetch_invoice_public_data(parsed_id: uuid.UUID) -> dict | None:
+    """Fetch public invoice data. Returns dict or None if not found.
 
-    No authentication required. Invoice UUID serves as access token
-    (2^128 space makes enumeration infeasible).
-
-    Returns ONLY: id, amount_xmr, amount_atomic, fiat_amount, fiat_currency,
-    description, address, status, expires_at, created_at, confirmations,
-    confirmations_required, paid_amount_atomic, monero_uri, qr_svg.
+    Used by both GET /public and GET /events (SSE).
     """
-    parsed_id = _validate_uuid(invoice_id)
-
     async with async_session() as db:
-        # Fetch invoice with address eagerly loaded
         result = await db.execute(
             select(Invoice)
             .options(selectinload(Invoice.address))
@@ -118,16 +109,11 @@ async def get_public_invoice(invoice_id: str):
         invoice = result.scalar_one_or_none()
 
         if invoice is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Invoice not found.",
-            )
+            return None
 
-        # Get address
         address = invoice.address.address if invoice.address else None
         address_str = address or ""
 
-        # Aggregate payment data: total paid + max confirmations
         payment_result = await db.execute(
             select(
                 func.coalesce(func.sum(Payment.amount_atomic), 0).label("paid_total"),
@@ -142,15 +128,13 @@ async def get_public_invoice(invoice_id: str):
         paid_amount_atomic = int(payment_row.paid_total)
         confirmations = int(payment_row.max_confirmations)
 
-        # Build monero URI and QR (only for pending invoices with address)
         monero_uri = None
         qr_svg = ""
         if address_str and invoice.status.value == "pending":
             monero_uri = _build_monero_uri(address_str, str(invoice.amount_xmr))
             qr_svg = _generate_qr_svg(monero_uri)
 
-        # Build filtered response — ONLY allowed fields
-        response_data = {
+        return {
             "id": str(invoice.id),
             "amount_xmr": str(invoice.amount_xmr),
             "amount_atomic": invoice.amount_atomic,
@@ -168,22 +152,113 @@ async def get_public_invoice(invoice_id: str):
             "qr_svg": qr_svg,
         }
 
-    response = JSONResponse(content=response_data)
+
+# ── Public Invoice Data ────────────────────────────────────────────────────
+
+
+@api_router.get("/invoices/{invoice_id}/public")
+async def get_public_invoice(invoice_id: str):
+    """Get limited invoice data for public payment page."""
+    parsed_id = _validate_uuid(invoice_id)
+    data = await _fetch_invoice_public_data(parsed_id)
+
+    if data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invoice not found.",
+        )
+
+    response = JSONResponse(content=data)
     for header, value in SECURITY_HEADERS.items():
         response.headers[header] = value
     return response
 
 
-# ─── Serve Payment Page ──────────────────────────────────────────────────────
+# ── SSE Stream (Phase 7B) ────────────────────────────────────────────────
+
+
+@api_router.get("/invoices/{invoice_id}/events")
+async def invoice_sse(invoice_id: str):
+    """SSE stream for real-time invoice status updates.
+
+    No authentication — UUID serves as access token (2^128 space).
+    Polls DB every 3s server-side, pushes only on changes.
+    Auto-closes on terminal status or after 30 min.
+
+    Events:
+      event: update    — full invoice data (same shape as /public)
+      event: close     — terminal state reached, stream ends
+
+    Client usage:
+      const es = new EventSource('/v1/invoices/<id>/events');
+      es.addEventListener('update', (e) => render(JSON.parse(e.data)));
+      es.addEventListener('close', () => es.close());
+    """
+    parsed_id = _validate_uuid(invoice_id)
+
+    # Verify invoice exists before opening stream
+    initial = await _fetch_invoice_public_data(parsed_id)
+    if initial is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invoice not found.",
+        )
+
+    async def event_generator():
+        last_status = None
+        last_confirmations = -1
+        last_paid = -1
+        elapsed = 0
+
+        while elapsed < SSE_MAX_DURATION:
+            data = await _fetch_invoice_public_data(parsed_id)
+            if data is None:
+                yield "event: close\ndata: {\"reason\": \"not_found\"}\n\n"
+                return
+
+            changed = (
+                data["status"] != last_status
+                or data["confirmations"] != last_confirmations
+                or data["paid_amount_atomic"] != last_paid
+            )
+
+            if changed:
+                # Don't send QR SVG over SSE (large, client already has it)
+                sse_data = {k: v for k, v in data.items() if k != "qr_svg"}
+                yield f"event: update\ndata: {json.dumps(sse_data)}\n\n"
+
+                last_status = data["status"]
+                last_confirmations = data["confirmations"]
+                last_paid = data["paid_amount_atomic"]
+
+                if last_status in TERMINAL_STATUSES:
+                    yield f"event: close\ndata: {{\"reason\": \"{last_status}\"}}\n\n"
+                    return
+
+            await asyncio.sleep(SSE_POLL_INTERVAL)
+            elapsed += SSE_POLL_INTERVAL
+
+        # Max duration reached
+        yield "event: close\ndata: {\"reason\": \"timeout\"}\n\n"
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",  # Disable nginx buffering
+    }
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers=headers,
+    )
+
+
+# ── Serve Payment Page ───────────────────────────────────────────────────
 
 
 @pay_router.get("/pay/{invoice_id}", include_in_schema=False)
 async def serve_payment_page(invoice_id: str):
-    """Serve standalone payment HTML page.
-
-    Validates UUID format, then returns static pay.html.
-    The page fetches invoice data via JS polling.
-    """
+    """Serve standalone payment HTML page."""
     _validate_uuid(invoice_id)
 
     if not PAY_HTML_PATH.exists():

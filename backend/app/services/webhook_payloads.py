@@ -12,7 +12,7 @@ from uuid import UUID
 from app.db.models import Invoice, Payment, Subscription
 
 
-# ─── Constants ────────────────────────────────────────────────────────
+# ─── Constants ────────────────────────────────────────────────────────────────
 
 MAX_ATTEMPTS: int = 7
 DELIVERY_TIMEOUT: float = 10.0
@@ -20,7 +20,7 @@ RETRY_DELAYS: list[int] = [60, 300, 1800, 7200, 43200, 86400]
 JITTER_MIN: float = 0.05
 JITTER_MAX: float = 0.2
 
-# Valid event types (19 total — Phase 8A)
+# Valid event types (20 total — Phase 8B)
 VALID_EVENTS: list[str] = [
     "payment.detected", "payment.confirmed", "payment.orphaned",
     "invoice.paid", "invoice.expired", "invoice.partially_paid",
@@ -33,10 +33,11 @@ VALID_EVENTS: list[str] = [
     "subscription.expired",    # Phase 6B
     "subscription.trial_started", # Phase 8A
     "subscription.trial_ended",   # Phase 8A
+    "subscription.prepaid",    # Phase 8B
 ]
 
 
-# ─── HMAC Signing ─────────────────────────────────────────────────────
+# ─── HMAC Signing ─────────────────────────────────────────────────────────────
 
 
 def sign_payload(payload_bytes: bytes, secret: str) -> str:
@@ -49,7 +50,7 @@ def verify_signature(payload_bytes: bytes, secret: str, signature: str) -> bool:
     return hmac.compare_digest(sign_payload(payload_bytes, secret), signature)
 
 
-# ─── Retry Schedule ──────────────────────────────────────────────────
+# ─── Retry Schedule ──────────────────────────────────────────────────────────
 
 
 def calculate_next_retry(attempt_count: int) -> datetime | None:
@@ -59,7 +60,7 @@ def calculate_next_retry(attempt_count: int) -> datetime | None:
     return datetime.now(timezone.utc) + timedelta(seconds=RETRY_DELAYS[idx])
 
 
-# ─── Payload Builders ────────────────────────────────────────────────
+# ─── Payload Builders ────────────────────────────────────────────────────────
 
 
 def build_payment_payload(payment: Payment, invoice: Invoice) -> dict[str, Any]:
@@ -107,6 +108,7 @@ def build_subscription_payload(
             "amount_xmr": str(subscription.amount_xmr),
             "interval_days": subscription.interval_days,
             "next_due_at": subscription.next_due_at.isoformat() if subscription.next_due_at else None,
+            "prepaid_until": subscription.prepaid_until.isoformat() if subscription.prepaid_until else None,
             "created_at": subscription.created_at.isoformat(),
         },
     }

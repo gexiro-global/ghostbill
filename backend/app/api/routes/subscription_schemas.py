@@ -1,6 +1,7 @@
 """Pydantic schemas for subscription API routes.
 
 Phase 8A: +trial_days in create request, +trial fields in response.
+Phase 8B: +PrepayRequest, +prepaid fields in response.
 """
 
 from pydantic import BaseModel, Field
@@ -26,6 +27,11 @@ class SubscriptionUpdateRequest(BaseModel):
     metadata: dict | None = Field(default=None, description="Metadata (immediate)")
 
 
+class PrepayRequest(BaseModel):
+    """Phase 8B: Pre-payment request."""
+    periods: int = Field(..., ge=1, le=36, description="Number of periods to prepay (1-36)")
+
+
 class PendingChangesResponse(BaseModel):
     amount_xmr: str | None = None
     amount_atomic: int | None = None
@@ -49,6 +55,7 @@ class SubscriptionResponse(BaseModel):
     cancelled_at: str | None = None
     trial_days: int | None = None  # Phase 8A
     trial_end_at: str | None = None  # Phase 8A
+    prepaid_until: str | None = None  # Phase 8B
     metadata: dict | None = None
     pending_changes: PendingChangesResponse | None = None
     has_pending_changes: bool = False
@@ -65,3 +72,16 @@ class SubscriptionCursorResponse(BaseModel):
     """Phase 6B: cursor pagination response."""
     data: list[SubscriptionResponse]
     has_more: bool
+
+
+class PrepayResponse(BaseModel):
+    """Phase 8B: Pre-payment response with invoice details."""
+    subscription_id: str
+    invoice_id: str
+    periods: int
+    discount_pct: int
+    per_period_xmr: str
+    total_xmr: str
+    total_atomic: int
+    prepaid_until: str
+    invoice_expires_at: str

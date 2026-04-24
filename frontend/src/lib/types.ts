@@ -40,7 +40,8 @@ export type WebhookEvent =
   | "subscription.resumed"
   | "subscription.expired"
   | "subscription.trial_started"
-  | "subscription.trial_ended";
+  | "subscription.trial_ended"
+  | "subscription.prepaid";  // Phase 8B
 
 export type NetworkMode = "live" | "test";
 
@@ -53,12 +54,18 @@ export interface CursorResponse<T> {
 
 // === Merchant ===
 
+export interface PrepayPlan {
+  periods: number;
+  discount_pct: number;
+}
+
 export interface Merchant {
   id: string;
   name: string;
   email: string;
   webhook_url: string | null;
   webhook_secret: string | null;
+  prepay_plans: PrepayPlan[] | null;  // Phase 8B
   created_at: string;
   updated_at: string;
 }
@@ -140,6 +147,7 @@ export interface Subscription {
   has_pending_changes: boolean;
   trial_days: number | null;
   trial_end_at: string | null;
+  prepaid_until: string | null;  // Phase 8B
   customer?: CustomerSummary;
   payments?: SubscriptionPaymentInfo[];
 }
@@ -157,6 +165,20 @@ export interface SubscriptionPaymentInfo {
   invoice_id: string;
   invoice_status: InvoiceStatus;
   paid_at: string | null;
+}
+
+// === Prepay (Phase 8B) ===
+
+export interface PrepayResponse {
+  subscription_id: string;
+  invoice_id: string;
+  periods: number;
+  discount_pct: number;
+  per_period_xmr: string;
+  total_xmr: string;
+  total_atomic: number;
+  prepaid_until: string;
+  invoice_expires_at: string;
 }
 
 // === Renewal Event (Phase 6C) ===

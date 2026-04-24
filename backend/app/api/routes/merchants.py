@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/merchants", tags=["merchants"])
 
 
-# ─── Request / Response schemas ──────────────────────────────────────────────
+# ─── Request / Response schemas ──────────────────────────────────────────────────
 
 
 class MerchantRegisterRequest(BaseModel):
@@ -97,6 +97,7 @@ class MerchantMeResponse(BaseModel):
     email: str | None
     monero_address: str
     webhook_url: str | None
+    prepay_plans: list[dict] | None = None  # Phase 8B
     environment: str
     is_active: bool
     created_at: str
@@ -107,6 +108,10 @@ class MerchantUpdateRequest(BaseModel):
     name: str | None = Field(default=None, max_length=255)
     email: str | None = Field(default=None, max_length=255)
     webhook_url: str | None = Field(default=None, max_length=2048)
+    prepay_plans: list[dict] | None = Field(
+        default=None,
+        description="Prepay plan configs: [{periods: 3, discount_pct: 10}, ...]",
+    )
 
 
 class MerchantUpdateResponse(BaseModel):
@@ -114,6 +119,7 @@ class MerchantUpdateResponse(BaseModel):
     name: str
     email: str | None
     webhook_url: str | None
+    prepay_plans: list[dict] | None = None  # Phase 8B
     updated_at: str
     message: str = "Merchant updated successfully."
 
@@ -123,7 +129,34 @@ class WebhookSecretResponse(BaseModel):
     message: str = "New webhook secret generated. Update your integration."
 
 
-# ─── Routes ──────────────────────────────────────────────────────────────────
+# ─── Helpers ────────────────────────────────────────────────────────────────────
+
+
+def _validate_prepay_plans(plans: list[dict]) -> list[dict]:
+    """Validate prepay_plans structure: [{periods: int, discount_pct: int}]."""
+    if not isinstance(plans, list):
+        raise ValueError("prepay_plans must be a list.")
+    if len(plans) > 10:
+        raise ValueError("Maximum 10 prepay plans allowed.")
+    seen_periods = set()
+    validated = []
+    for plan in plans:
+        if not isinstance(plan, dict):
+            raise ValueError("Each plan must be a dict with 'periods' and 'discount_pct'.")
+        periods = plan.get("periods")
+        discount_pct = plan.get("discount_pct", 0)
+        if not isinstance(periods, int) or periods < 1 or periods > 36:
+            raise ValueError(f"periods must be int 1-36, got: {periods}")
+        if not isinstance(discount_pct, (int, float)) or discount_pct < 0 or discount_pct > 99:
+            raise ValueError(f"discount_pct must be 0-99, got: {discount_pct}")
+        if periods in seen_periods:
+            raise ValueError(f"Duplicate periods value: {periods}")
+        seen_periods.add(periods)
+        validated.append({"periods": periods, "discount_pct": int(discount_pct)})
+    return validated
+
+
+# ─── Routes ────────────────────────────────────────────────────────────────────
 
 
 @router.post(
@@ -216,6 +249,7 @@ async def get_me(
         email=merchant.email,
         monero_address=merchant.monero_address,
         webhook_url=merchant.webhook_url,
+        prepay_plans=merchant.prepay_plans,
         environment=merchant.environment,
         is_active=merchant.is_active,
         created_at=merchant.created_at.isoformat(),
@@ -229,7 +263,7 @@ async def update_me(
     merchant: Merchant = Depends(get_current_merchant),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update current merchant profile (name, email, webhook_url)."""
+    """Update current merchant profile (name, email, webhook_url, prepay_plans)."""
 
     # Track which fields changed for audit
     changed_fields = []
@@ -243,6 +277,16 @@ async def update_me(
     if body.webhook_url is not None:
         merchant.webhook_url = body.webhook_url
         changed_fields.append("webhook_url")
+    # Phase 8B: prepay plans
+    if body.prepay_plans is not None:
+        try:
+            merchant.prepay_plans = _validate_prepay_plans(body.prepay_plans)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid prepay_plans: {exc}",
+            )
+        changed_fields.append("prepay_plans")
 
     if not changed_fields:
         raise HTTPException(
@@ -269,6 +313,7 @@ async def update_me(
         name=merchant.name,
         email=merchant.email,
         webhook_url=merchant.webhook_url,
+        prepay_plans=merchant.prepay_plans,
         updated_at=merchant.updated_at.isoformat(),
     )
 

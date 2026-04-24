@@ -12,12 +12,14 @@ import {
   Clock,
   CheckCircle,
   AlertTriangle,
+  CreditCard,
+  CalendarCheck,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { formatXMR, formatDate, timeAgo } from "@/lib/format";
 import { StatusBadge } from "@/components/StatusBadge";
 import CopyButton from "@/components/CopyButton";
-import type { Subscription, Price } from "@/lib/types";
+import type { Subscription, Price, PrepayResponse, Merchant } from "@/lib/types";
 
 export default function SubscriptionDetailPage() {
   const params = useParams();
@@ -25,6 +27,7 @@ export default function SubscriptionDetailPage() {
 
   const [sub, setSub] = useState<Subscription | null>(null);
   const [price, setPrice] = useState<Price | null>(null);
+  const [merchant, setMerchant] = useState<Merchant | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,12 +39,15 @@ export default function SubscriptionDetailPage() {
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [cancelInput, setCancelInput] = useState("");
 
+  // Phase 8B: Prepay dialog
+  const [prepayDialogOpen, setPrepayDialogOpen] = useState(false);
+  const [prepayPeriods, setPrepayPeriods] = useState<number>(3);
+  const [prepayResult, setPrepayResult] = useState<PrepayResponse | null>(null);
+
   useEffect(() => {
     fetchSubscription();
-    api
-      .get<Price>("/price")
-      .then(setPrice)
-      .catch(() => {});
+    api.get<Price>("/price").then(setPrice).catch(() => {});
+    api.get<Merchant>("/merchants/me").then(setMerchant).catch(() => {});
   }, [id]);
 
   async function fetchSubscription() {
@@ -84,6 +90,24 @@ export default function SubscriptionDetailPage() {
     }
   }
 
+  async function handlePrepay() {
+    setActionLoading("prepay");
+    setActionError(null);
+    setPrepayResult(null);
+    try {
+      const result = await api.post<PrepayResponse>(
+        `/subscriptions/${id}/prepay`,
+        { periods: prepayPeriods }
+      );
+      setPrepayResult(result);
+      await fetchSubscription();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to create prepay invoice");
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
   function fiatEstimate(amountAtomic: string): string {
     if (!price) return "";
     try {
@@ -93,6 +117,10 @@ export default function SubscriptionDetailPage() {
       return "";
     }
   }
+
+  const plans = merchant?.prepay_plans || [];
+  const canPrepay = sub?.status === "active" || sub?.status === "past_due";
+  const hasPrepayPlans = plans.length > 0;
 
   if (loading) {
     return (
@@ -153,6 +181,16 @@ export default function SubscriptionDetailPage() {
 
         {/* Action buttons */}
         <div className="flex items-center gap-2">
+          {canPrepay && hasPrepayPlans && (
+            <button
+              onClick={() => { setPrepayDialogOpen(true); setPrepayResult(null); }}
+              disabled={actionLoading !== null}
+              className="gb-btn-secondary flex items-center gap-2 text-gb-accent hover:border-gb-accent disabled:opacity-50"
+            >
+              <CreditCard className="w-4 h-4" />
+              Prepay
+            </button>
+          )}
           {canPause && (
             <button
               onClick={() => handleAction("pause")}
@@ -245,6 +283,20 @@ export default function SubscriptionDetailPage() {
                 </p>
               </div>
             </div>
+            {/* Phase 8B: Prepaid until badge */}
+            {sub.prepaid_until && (
+              <div className="flex items-center gap-2 mt-2 p-3 rounded-gb bg-gb-accent/10 border border-gb-accent/30">
+                <CalendarCheck className="w-4 h-4 text-gb-accent shrink-0" />
+                <p className="text-sm text-gb-accent">
+                  Prepaid until{" "}
+                  {new Date(sub.prepaid_until).toLocaleDateString("en-US", {
+                    month: "long",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Details */}
@@ -521,6 +573,107 @@ export default function SubscriptionDetailPage() {
                 Go Back
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Phase 8B: Prepay dialog */}
+      {prepayDialogOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/60"
+            onClick={() => setPrepayDialogOpen(false)}
+          />
+          <div className="relative bg-gb-sidebar border border-gb-border rounded-gb p-6 w-full max-w-md mx-4 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-full bg-gb-accent/10">
+                <CreditCard className="w-5 h-5 text-gb-accent" />
+              </div>
+              <h2 className="font-heading text-lg font-semibold text-gb-text-primary">
+                Pre-pay Subscription
+              </h2>
+            </div>
+
+            {prepayResult ? (
+              <div className="space-y-3">
+                <div className="p-3 rounded-gb bg-gb-success/10 border border-gb-success/30">
+                  <p className="text-sm text-gb-success">Prepay invoice created!</p>
+                </div>
+                <div className="text-sm space-y-1">
+                  <p className="text-gb-text-secondary">
+                    Invoice: <Link href={`/dashboard/invoices/${prepayResult.invoice_id}`} className="text-gb-accent hover:underline font-mono">{prepayResult.invoice_id.slice(0, 12)}...</Link>
+                  </p>
+                  <p className="text-gb-text-secondary">
+                    Total: <span className="text-gb-text-primary font-mono">{prepayResult.total_xmr} XMR</span>
+                    {prepayResult.discount_pct > 0 && <span className="text-gb-success ml-1">(-{prepayResult.discount_pct}%)</span>}
+                  </p>
+                  <p className="text-gb-text-secondary">
+                    Prepaid until: <span className="text-gb-text-primary">{new Date(prepayResult.prepaid_until).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</span>
+                  </p>
+                </div>
+                <button
+                  onClick={() => { setPrepayDialogOpen(false); setPrepayResult(null); }}
+                  className="gb-btn-secondary w-full"
+                >
+                  Close
+                </button>
+              </div>
+            ) : (
+              <>
+                <p className="text-sm text-gb-text-secondary">
+                  Pay multiple periods upfront with a discount.
+                </p>
+
+                <div>
+                  <label className="block text-sm font-medium text-gb-text-secondary mb-2">Select plan</label>
+                  <div className="space-y-2">
+                    {plans.map((plan) => {
+                      const total = Number(sub.amount_xmr) * plan.periods * (1 - plan.discount_pct / 100);
+                      return (
+                        <button
+                          key={plan.periods}
+                          onClick={() => setPrepayPeriods(plan.periods)}
+                          className={`w-full text-left p-3 rounded-gb border transition-colors ${
+                            prepayPeriods === plan.periods
+                              ? "border-gb-accent bg-gb-accent/10"
+                              : "border-gb-border hover:border-gb-accent/50"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-medium text-gb-text-primary">
+                              {plan.periods} period{plan.periods > 1 ? "s" : ""}
+                              {plan.discount_pct > 0 && (
+                                <span className="ml-2 text-xs text-gb-success">-{plan.discount_pct}%</span>
+                              )}
+                            </span>
+                            <span className="text-sm font-mono text-gb-text-primary">
+                              {total.toFixed(6)} XMR
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 pt-1">
+                  <button
+                    onClick={handlePrepay}
+                    disabled={actionLoading === "prepay"}
+                    className="px-4 py-2 rounded-gb text-sm font-medium bg-gb-accent text-white hover:bg-gb-accent/80 disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {actionLoading === "prepay" && <Loader2 className="w-4 h-4 animate-spin" />}
+                    Create Prepay Invoice
+                  </button>
+                  <button
+                    onClick={() => setPrepayDialogOpen(false)}
+                    className="gb-btn-secondary"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

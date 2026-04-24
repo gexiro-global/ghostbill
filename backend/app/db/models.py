@@ -25,7 +25,7 @@ class Base(DeclarativeBase):
     pass
 
 
-# ── Enums ──────────────────────────────────────────────────────────────────────────────
+# ── Enums ──────────────────────────────────────────────────────────────────────────────────
 
 
 class InvoiceStatus(str, enum.Enum):
@@ -60,7 +60,7 @@ class WebhookStatus(str, enum.Enum):
     dead_lettered = "dead_lettered"  # Phase 6B: DLQ
 
 
-# ── Models ─────────────────────────────────────────────────────────────────────────────
+# ── Models ─────────────────────────────────────────────────────────────────────────────────
 
 
 class Merchant(Base):
@@ -80,6 +80,8 @@ class Merchant(Base):
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     metadata_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Phase 8B: prepay plan configuration
+    prepay_plans: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -267,6 +269,13 @@ class Subscription(Base):
     pending_interval_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     pending_grace_soft: Mapped[int | None] = mapped_column(Integer, nullable=True)
     pending_grace_hard: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Phase 8B: pre-payment tracking
+    prepaid_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    prepay_invoice_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("invoices.id"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -281,6 +290,9 @@ class Subscription(Base):
     )
     renewal_events: Mapped[list["SubscriptionRenewalEvent"]] = relationship(
         back_populates="subscription"
+    )
+    prepay_invoice: Mapped["Invoice | None"] = relationship(
+        foreign_keys=[prepay_invoice_id]
     )
 
 

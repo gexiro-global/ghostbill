@@ -7,6 +7,7 @@ Runs every 3600s (1 hour):
 
 Phase 6C: event logging for every renewal attempt.
 Phase 8A: trial period expiration sweep.
+Phase 8B: prepay invoice guard (skip if pending, clear if expired).
 """
 
 import asyncio
@@ -16,7 +17,13 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Merchant, Subscription, SubscriptionStatus
+from app.db.models import (
+    Invoice,
+    InvoiceStatus,
+    Merchant,
+    Subscription,
+    SubscriptionStatus,
+)
 from app.db.session import async_session
 from app.services.invoice_service import WalletUnavailableError
 from app.services.subscription_exceptions import SkipRenewalError
@@ -46,6 +53,46 @@ async def subscription_renewer_loop() -> None:
         await asyncio.sleep(SWEEP_INTERVAL)
 
 
+async def _check_prepay_guard(db: AsyncSession, sub: Subscription) -> bool:
+    """Phase 8B: Check prepay invoice status.
+
+    Returns True if renewal should be SKIPPED (prepay active).
+    Returns False if prepay cleared and renewal can proceed.
+    """
+    if sub.prepay_invoice_id is None:
+        return False
+
+    inv_stmt = select(Invoice).where(Invoice.id == sub.prepay_invoice_id)
+    invoice = (await db.execute(inv_stmt)).scalar_one_or_none()
+
+    if invoice is None:
+        # Orphaned reference — clear and proceed
+        sub.prepay_invoice_id = None
+        sub.prepaid_until = None
+        await db.flush()
+        logger.warning("Cleared orphaned prepay_invoice_id for sub %s", sub.id)
+        return False
+
+    if invoice.status == InvoiceStatus.pending:
+        # Prepay invoice still pending — skip renewal
+        return True
+
+    if invoice.status in (
+        InvoiceStatus.paid, InvoiceStatus.overpaid, InvoiceStatus.late_paid,
+    ):
+        # Prepay already paid — next_due_at should be advanced. Skip.
+        return True
+
+    # Invoice expired or cancelled — clear prepay and allow renewal
+    from app.services.subscription_prepay import clear_expired_prepay
+    await clear_expired_prepay(db, sub)
+    await log_renewal_event(
+        db, sub.id, "prepay_expired",
+        details={"invoice_id": str(invoice.id), "invoice_status": invoice.status.value},
+    )
+    return False
+
+
 async def run_sweep() -> dict:
     """Execute one full renewal sweep + grace check.
 
@@ -55,6 +102,7 @@ async def run_sweep() -> dict:
     renewed = 0
     skipped = 0
     failed = 0
+    prepay_skipped = 0
 
     # Phase 8A: Trial expiration sweep
     trial_activated = 0
@@ -111,13 +159,16 @@ async def run_sweep() -> dict:
                 break
 
             for sub in subs:
+                # Phase 8B: check prepay guard
+                if await _check_prepay_guard(db, sub):
+                    prepay_skipped += 1
+                    continue
+
                 try:
                     await create_renewal_invoice(db, sub)
                     renewed += 1
-                    # success event logged inside _create_renewal_invoice
                 except SkipRenewalError as exc:
                     skipped += 1
-                    # Phase 6C: log skip event with result_type
                     await log_renewal_event(
                         db, sub.id, exc.result_type,
                         error_message=str(exc),
@@ -125,7 +176,6 @@ async def run_sweep() -> dict:
                 except WalletUnavailableError as exc:
                     failed += 1
                     logger.warning("Renewal failed (wallet): sub=%s, %s", sub.id, exc)
-                    # Phase 6C: log wallet failure
                     await log_renewal_event(
                         db, sub.id, "failed_wallet",
                         error_message=str(exc),
@@ -133,7 +183,6 @@ async def run_sweep() -> dict:
                 except Exception as exc:
                     failed += 1
                     logger.error("Renewal failed: sub=%s, %s", sub.id, exc, exc_info=True)
-                    # Phase 6C: log DB/other failure
                     await log_renewal_event(
                         db, sub.id, "failed_db",
                         error_message=str(exc),
@@ -142,16 +191,20 @@ async def run_sweep() -> dict:
             await db.commit()
 
         grace_counts = await check_grace_periods(db)
-        # grace events logged inside check_grace_periods
         await db.commit()
 
     total_grace = sum(grace_counts.values())
-    if renewed or skipped or failed or total_grace or trial_activated:
+    if renewed or skipped or failed or total_grace or trial_activated or prepay_skipped:
         logger.info(
-            "Renewer: %d renewed, %d skipped, %d failed, %d trials_activated, %d past_due, %d expired, %d recovered",
-            renewed, skipped, failed, trial_activated,
+            "Renewer: %d renewed, %d skipped, %d failed, %d trials, %d prepay_skipped, "
+            "%d past_due, %d expired, %d recovered",
+            renewed, skipped, failed, trial_activated, prepay_skipped,
             grace_counts.get("soft", 0), grace_counts.get("hard", 0),
             grace_counts.get("recovered", 0),
         )
 
-    return {"renewed": renewed, "skipped": skipped, "failed": failed, "trial_activated": trial_activated, "grace": grace_counts}
+    return {
+        "renewed": renewed, "skipped": skipped, "failed": failed,
+        "trial_activated": trial_activated, "prepay_skipped": prepay_skipped,
+        "grace": grace_counts,
+    }

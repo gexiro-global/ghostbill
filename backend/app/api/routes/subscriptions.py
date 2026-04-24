@@ -8,6 +8,7 @@ POST   /v1/subscriptions/{id}/pause   — Pause
 POST   /v1/subscriptions/{id}/resume  — Resume
 POST   /v1/subscriptions/{id}/cancel  — Cancel
 GET    /v1/subscriptions/{id}/renewal-log — Renewal event log [Phase 6C]
+POST   /v1/subscriptions/{id}/prepay  — Pre-pay N periods [Phase 8B]
 """
 
 import logging
@@ -21,6 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_merchant
 from app.api.routes.subscription_schemas import (
+    PrepayRequest,
+    PrepayResponse,
     SubscriptionCreateRequest,
     SubscriptionCursorResponse,
     SubscriptionDetailResponse,
@@ -40,6 +43,7 @@ from app.services.subscription_exceptions import (
     SubscriptionStateError,
     SubscriptionValidationError,
 )
+from app.services.subscription_prepay import create_prepay_invoice
 from app.services.subscription_service import subscription_service
 from app.services.subscription_update import update_subscription
 from app.services.webhook_payloads import build_subscription_updated_payload
@@ -50,7 +54,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/subscriptions", tags=["subscriptions"])
 
 
-# ── Helpers ───────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 
 def _build_pending_changes(sub):
@@ -88,6 +92,7 @@ def _sub_to_response(sub) -> SubscriptionResponse:
         cancelled_at=sub.cancelled_at.isoformat() if sub.cancelled_at else None,
         trial_days=sub.trial_days,
         trial_end_at=sub.trial_end_at.isoformat() if sub.trial_end_at else None,
+        prepaid_until=sub.prepaid_until.isoformat() if sub.prepaid_until else None,
         metadata=sub.metadata_json, pending_changes=pending,
         has_pending_changes=has_pending,
         created_at=sub.created_at.isoformat(), updated_at=sub.updated_at.isoformat(),
@@ -106,7 +111,7 @@ def _parse_start_at(raw: str | None) -> datetime | None:
         raise HTTPException(status_code=400, detail=f"Invalid start_at: {raw!r}")
 
 
-# ── Phase 6C: Renewal Log Schemas ────────────────────────────────────
+# ── Phase 6C: Renewal Log Schemas ────────────────────────────────────────
 
 
 class RenewalEventResponse(BaseModel):
@@ -123,7 +128,7 @@ class RenewalLogCursorResponse(BaseModel):
     has_more: bool
 
 
-# ── Routes ────────────────────────────────────────────────────────────
+# ── Routes ────────────────────────────────────────────────────────────────────
 
 
 @router.post("", response_model=SubscriptionDetailResponse, status_code=201)
@@ -223,7 +228,6 @@ async def get_renewal_log(
     """Phase 6C: Get renewal event log for a subscription (cursor paginated)."""
     validate_cursor_params(starting_after, ending_before)
 
-    # Verify subscription belongs to merchant
     sub_stmt = select(Subscription).where(
         Subscription.id == subscription_id,
         Subscription.merchant_id == merchant.id,
@@ -243,11 +247,9 @@ async def get_renewal_log(
 
     data = [
         RenewalEventResponse(
-            id=str(e.id),
-            result=e.result,
+            id=str(e.id), result=e.result,
             invoice_id=str(e.invoice_id) if e.invoice_id else None,
-            error_message=e.error_message,
-            details=e.details,
+            error_message=e.error_message, details=e.details,
             created_at=e.created_at.isoformat(),
         )
         for e in result["data"]
@@ -342,3 +344,52 @@ async def cancel_subscription(
     except SubscriptionStateError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     return _sub_to_response(sub)
+
+
+@router.post("/{subscription_id}/prepay", response_model=PrepayResponse, status_code=201)
+async def prepay_subscription(
+    subscription_id: uuid.UUID,
+    body: PrepayRequest,
+    merchant: Merchant = Depends(get_current_merchant),
+    db: AsyncSession = Depends(get_db),
+):
+    """Phase 8B: Pre-pay N periods with optional discount."""
+    try:
+        invoice = await create_prepay_invoice(
+            db=db, merchant=merchant,
+            subscription_id=subscription_id, periods=body.periods,
+        )
+        # Fire subscription.prepaid webhook
+        sub_stmt = select(Subscription).where(Subscription.id == subscription_id)
+        sub = (await db.execute(sub_stmt)).scalar_one()
+        await webhook_service.dispatch_subscription_event(
+            db=db, event_type="subscription.prepaid",
+            subscription=sub, invoice_id=invoice.id,
+        )
+        await db.commit()
+    except SubscriptionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except SubscriptionStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except SubscriptionValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except WalletUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    meta = invoice.metadata_json or {}
+    # Re-fetch subscription for prepaid_until
+    sub = (await db.execute(
+        select(Subscription).where(Subscription.id == subscription_id)
+    )).scalar_one()
+
+    return PrepayResponse(
+        subscription_id=str(subscription_id),
+        invoice_id=str(invoice.id),
+        periods=meta.get("periods", body.periods),
+        discount_pct=meta.get("discount_pct", 0),
+        per_period_xmr=meta.get("per_period_amount_xmr", ""),
+        total_xmr=str(invoice.amount_xmr),
+        total_atomic=invoice.amount_atomic,
+        prepaid_until=sub.prepaid_until.isoformat() if sub.prepaid_until else "",
+        invoice_expires_at=invoice.expires_at.isoformat(),
+    )

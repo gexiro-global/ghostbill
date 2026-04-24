@@ -1,0 +1,60 @@
+server {
+    listen 8443 ssl http2;
+    server_name ghostbill.org www.ghostbill.org;
+
+    ssl_certificate     /etc/ssl/ghostbill/origin.pem;
+    ssl_certificate_key /etc/ssl/ghostbill/origin-key.pem;
+
+    root /var/www/ghostbill;
+    index index.html;
+
+    # Hashed Vite assets (content-hash in filename) — safe to cache forever.
+    location ~* ^/assets/.*\.(js|css|woff2?)$ {
+        expires 365d;
+        add_header Cache-Control "public, immutable, max-age=31536000" always;
+        try_files $uri =404;
+    }
+
+    # Top-level meta files (og-image, favicon, robots, sitemap, llms.txt, manifest):
+    # these CAN change between deploys (no content-hash in name), so we must NOT
+    # send 'immutable' — scrapers (LinkedIn, Facebook, Twitter) honor it for
+    # 30 days and keep the stale image. 1 hour + must-revalidate forces a
+    # conditional GET (304) and refetch on OG rescrape.
+    location ~* \.(png|jpg|jpeg|gif|svg|ico|webp|json|xml|txt|webmanifest)$ {
+        expires 1h;
+        add_header Cache-Control "public, max-age=3600, must-revalidate" always;
+        try_files $uri =404;
+    }
+
+    # Prerendered files — internal only (not directly accessible)
+    location /_prerendered/ {
+        internal;
+    }
+
+    # Bot prerender + SPA fallback
+    location / {
+        if ($is_bot) {
+            error_page 418 = @prerender;
+            return 418;
+        }
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Named location: serve prerendered HTML to bots
+    location @prerender {
+        try_files $prerender_path /index.html;
+    }
+
+    # Security headers
+    add_header X-Frame-Options "DENY" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+
+    server_tokens off;
+
+    access_log /var/log/nginx/ghostbill-landing-access.log;
+    error_log /var/log/nginx/ghostbill-landing-error.log;
+}

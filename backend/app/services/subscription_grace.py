@@ -9,6 +9,7 @@ Grace logic:
 
 Phase 6B: fires subscription.expired event on hard grace.
 Phase 6C: logs renewal events (grace_soft, grace_hard, grace_recovered).
+Phase 8B: detects prepay invoices and delegates to subscription_prepay.
 """
 
 import logging
@@ -35,8 +36,41 @@ async def handle_subscription_payment(
 ) -> None:
     """Called when invoice transitions to paid/overpaid/late_paid.
 
-    Recovers subscription from past_due → active if applicable.
+    Phase 8B: detects prepay invoices and creates N subscription_payments.
+    Otherwise recovers subscription from past_due → active if applicable.
     """
+    # Check if this is a prepay invoice
+    invoice_stmt = select(Invoice).where(Invoice.id == invoice_id)
+    invoice = (await db.execute(invoice_stmt)).scalar_one_or_none()
+    if invoice is None:
+        return
+
+    meta = invoice.metadata_json or {}
+    if meta.get("prepay") is True:
+        # Phase 8B: handle prepay payment
+        sub_id_str = meta.get("subscription_id")
+        if sub_id_str:
+            sub_stmt = (
+                select(Subscription)
+                .where(Subscription.id == uuid.UUID(sub_id_str))
+                .with_for_update()
+            )
+            sub = (await db.execute(sub_stmt)).scalar_one_or_none()
+            if sub is not None:
+                from app.services.subscription_prepay import handle_prepay_payment
+                await handle_prepay_payment(db, invoice, sub)
+                # Fire subscription.prepaid webhook (fulfillment)
+                try:
+                    from app.services.webhook_service import webhook_service
+                    await webhook_service.dispatch_subscription_event(
+                        db=db, event_type="subscription.prepaid",
+                        subscription=sub, invoice_id=invoice_id,
+                    )
+                except Exception as exc:
+                    logger.warning("Failed to fire subscription.prepaid for %s: %s", sub.id, exc)
+        return
+
+    # Standard flow: check subscription_payments for this invoice
     sp_stmt = select(SubscriptionPayment).where(
         SubscriptionPayment.invoice_id == invoice_id
     )

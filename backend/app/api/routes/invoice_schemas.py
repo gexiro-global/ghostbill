@@ -55,6 +55,28 @@ class InvoiceResponse(BaseModel):
     updated_at: str
 
 
+class PaymentSummary(BaseModel):
+    """Lightweight payment info for invoice detail view."""
+
+    id: str
+    tx_hash: str
+    amount_atomic: int
+    amount_xmr: str
+    status: str
+    confirmations: int
+    block_height: int | None
+    detected_at: str
+    confirmed_at: str | None
+
+
+class InvoiceDetailResponse(InvoiceResponse):
+    """Extended invoice response with payment details."""
+
+    paid_atomic: int
+    paid_xmr: str
+    payments: list[PaymentSummary]
+
+
 class InvoiceCursorResponse(BaseModel):
     data: list[InvoiceResponse]
     has_more: bool

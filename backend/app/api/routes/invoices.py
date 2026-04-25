@@ -2,7 +2,7 @@
 
 POST /v1/invoices              — Create new invoice (auth required)
 GET  /v1/invoices              — List invoices with cursor pagination (auth required)
-GET  /v1/invoices/{id}         — Get single invoice (auth required)
+GET  /v1/invoices/{id}         — Get single invoice with payments (auth required)
 POST /v1/invoices/{id}/cancel  — Cancel pending invoice (auth required)
 """
 
@@ -20,7 +20,9 @@ from app.api.auth import get_current_merchant
 from app.api.routes.invoice_schemas import (
     InvoiceCreateRequest,
     InvoiceCursorResponse,
+    InvoiceDetailResponse,
     InvoiceResponse,
+    PaymentSummary,
 )
 from app.db.models import Invoice, InvoiceStatus, Merchant
 from app.db.session import get_db
@@ -43,7 +45,7 @@ router = APIRouter(prefix="/invoices", tags=["invoices"])
 
 
 def _invoice_to_response(invoice) -> InvoiceResponse:
-    """Convert Invoice ORM object to response schema."""
+    """Convert Invoice ORM object to response schema (list view)."""
     addr = invoice.address
     return InvoiceResponse(
         id=str(invoice.id),
@@ -62,6 +64,52 @@ def _invoice_to_response(invoice) -> InvoiceResponse:
         paid_at=invoice.paid_at.isoformat() if invoice.paid_at else None,
         created_at=invoice.created_at.isoformat(),
         updated_at=invoice.updated_at.isoformat(),
+    )
+
+
+def _invoice_to_detail_response(invoice) -> InvoiceDetailResponse:
+    """Convert Invoice ORM object to detail response with payments."""
+    addr = invoice.address
+    payments = invoice.payments or []
+
+    paid_atomic = sum(p.amount_atomic for p in payments if p.status.value != "orphaned")
+    paid_xmr = Decimal(paid_atomic) / Decimal(10**12)
+
+    payment_summaries = [
+        PaymentSummary(
+            id=str(p.id),
+            tx_hash=p.tx_hash,
+            amount_atomic=p.amount_atomic,
+            amount_xmr=str(p.amount_xmr),
+            status=p.status.value,
+            confirmations=p.confirmations,
+            block_height=p.block_height,
+            detected_at=p.detected_at.isoformat(),
+            confirmed_at=p.confirmed_at.isoformat() if p.confirmed_at else None,
+        )
+        for p in payments
+    ]
+
+    return InvoiceDetailResponse(
+        id=str(invoice.id),
+        merchant_id=str(invoice.merchant_id),
+        amount_xmr=str(invoice.amount_xmr),
+        amount_atomic=invoice.amount_atomic,
+        fiat_currency=invoice.fiat_currency,
+        fiat_amount=str(invoice.fiat_amount) if invoice.fiat_amount is not None else None,
+        fiat_rate=str(invoice.fiat_rate) if invoice.fiat_rate is not None else None,
+        status=invoice.status.value,
+        description=invoice.description,
+        metadata=invoice.metadata_json,
+        address=addr.address if addr else None,
+        address_index=addr.address_index if addr else None,
+        expires_at=invoice.expires_at.isoformat(),
+        paid_at=invoice.paid_at.isoformat() if invoice.paid_at else None,
+        created_at=invoice.created_at.isoformat(),
+        updated_at=invoice.updated_at.isoformat(),
+        paid_atomic=paid_atomic,
+        paid_xmr=str(paid_xmr),
+        payments=payment_summaries,
     )
 
 
@@ -163,18 +211,20 @@ async def list_invoices(
     )
 
 
-@router.get("/{invoice_id}", response_model=InvoiceResponse)
+@router.get("/{invoice_id}", response_model=InvoiceDetailResponse)
 async def get_invoice(
     invoice_id: uuid.UUID,
     merchant: Merchant = Depends(get_current_merchant),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get a single invoice by ID."""
+    """Get a single invoice by ID, including payments and paid amount."""
     try:
         invoice = await invoice_service.get_invoice(db=db, merchant_id=merchant.id, invoice_id=invoice_id)
     except InvoiceNotFoundError:
         raise HTTPException(status_code=404, detail=f"Invoice {invoice_id} not found.")
-    return _invoice_to_response(invoice)
+    # Eager load payments for detail view
+    await db.refresh(invoice, attribute_names=["payments"])
+    return _invoice_to_detail_response(invoice)
 
 
 @router.post("/{invoice_id}/cancel", response_model=InvoiceResponse)

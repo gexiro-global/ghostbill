@@ -12,15 +12,22 @@
 - [Amounts & Precision](#amounts--precision)
 - [Rate Limiting](#rate-limiting)
 - [Error Handling](#error-handling)
+- [Pagination](#pagination)
 - [Endpoints](#endpoints)
   - [Health](#health)
   - [Merchants](#merchants)
   - [Invoices](#invoices)
   - [Payments](#payments)
-  - [Webhooks](#webhooks)
+  - [Customers](#customers)
+  - [Subscriptions](#subscriptions)
+  - [Webhooks & Dead Letter Queue](#webhooks--dead-letter-queue)
   - [API Keys](#api-keys)
+  - [Analytics](#analytics)
   - [Dashboard Auth (Monero Signature)](#dashboard-auth-monero-signature)
   - [Price](#price)
+  - [Public Endpoints](#public-endpoints)
+  - [Admin (Operator)](#admin-operator)
+- [Environments](#environments)
 
 ---
 
@@ -37,7 +44,7 @@ Authorization: Bearer <api_key>
 **API key format:**
 
 | Environment | Format | Example |
-|-------------|--------|---------|
+|-------------|--------|--------|
 | Live | `gb_live_<hex32>` | `gb_live_5d347e8b575d6d546f7f8af504461ce7` |
 | Test | `gb_test_<hex32>` | `gb_test_a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6` |
 
@@ -49,14 +56,7 @@ Authorization: Bearer <api_key>
 
 **Dashboard authentication** uses a separate Monero signature flow (see [Dashboard Auth](#dashboard-auth-monero-signature)). Session tokens use the format `gbs_<hex64>` with 24-hour TTL.
 
-**Example:**
-
-```bash
-curl -X GET http://127.0.0.1:8013/v1/merchants/me \
-  -H "Authorization: Bearer gb_live_5d347e8b575d6d546f7f8af504461ce7"
-```
-
-**Unauthenticated endpoints:** `GET /health`, `GET /v1/price`
+**Unauthenticated endpoints:** `GET /health`, `GET /v1/price`, `GET /v1/invoices/{id}/public`, `GET /v1/invoices/{id}/events`, `GET /pay/{id}`
 
 ---
 
@@ -65,15 +65,13 @@ curl -X GET http://127.0.0.1:8013/v1/merchants/me \
 GhostBill uses **two representations** for Monero amounts:
 
 | Field | Type | Description | Example |
-|-------|------|-------------|---------|
+|-------|------|-------------|--------|
 | `amount_xmr` | `string` | Human-readable XMR amount (display only) | `"0.500000000000"` |
 | `amount_atomic` | `integer` (BIGINT) | Piconero — **source of truth** | `500000000000` |
 
 **Conversion:** `1 XMR = 10^12 piconero (atomic units)`
 
 Always use `amount_atomic` for calculations and comparisons. The `amount_xmr` field is provided for display convenience and should never be used for arithmetic.
-
-**Dust threshold:** Payments below `100000000` atomic (0.0001 XMR) are ignored by the detection engine.
 
 ---
 
@@ -88,22 +86,21 @@ All authenticated endpoints are rate-limited. Limits are returned in response he
 | `X-RateLimit-Reset` | Unix timestamp when window resets |
 | `Retry-After` | Seconds until next allowed request (only on 429) |
 
-**Tiers:**
+**IP-based tiers:**
 
 | Tier | Endpoints | Limit |
 |------|-----------|-------|
 | Strict | `POST /v1/merchants` | 5/hour |
-| Write | `POST /v1/invoices`, `POST /v1/api-keys` | 60/min |
+| Write | `POST /v1/invoices`, `POST /v1/api-keys`, etc. | 60/min |
 | Read | `GET /v1/invoices`, `GET /v1/payments`, etc. | 120/min |
 | Public | `GET /health`, `GET /v1/price` | 300/min |
 
-**429 response:**
+**Per-merchant limits (Phase 6C):**
 
-```json
-{
-  "detail": "Rate limit exceeded. Retry after 42 seconds."
-}
-```
+| Type | Limit |
+|------|-------|
+| Write operations | 120/min per merchant |
+| Read operations | 300/min per merchant |
 
 ---
 
@@ -116,20 +113,6 @@ GhostBill returns standard HTTP status codes with JSON error bodies.
 ```json
 {
   "detail": "Human-readable error message"
-}
-```
-
-**Validation error format (422):**
-
-```json
-{
-  "detail": [
-    {
-      "loc": ["body", "amount_xmr"],
-      "msg": "field required",
-      "type": "missing"
-    }
-  ]
 }
 ```
 
@@ -150,13 +133,48 @@ GhostBill returns standard HTTP status codes with JSON error bodies.
 
 ---
 
+## Pagination
+
+All list endpoints use **cursor-based pagination** (Stripe-compatible).
+
+**Query parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `limit` | integer | Results per page (1–100, default 50) |
+| `starting_after` | UUID | Return results after this ID (next page) |
+| `ending_before` | UUID | Return results before this ID (previous page) |
+
+**Response format:**
+
+```json
+{
+  "data": [...],
+  "has_more": true
+}
+```
+
+**Example — paginating through invoices:**
+
+```bash
+# First page
+curl "http://127.0.0.1:8013/v1/invoices?limit=10" \
+  -H "Authorization: Bearer gb_live_..."
+
+# Next page (use last item's ID)
+curl "http://127.0.0.1:8013/v1/invoices?limit=10&starting_after=a1b2c3d4-..." \
+  -H "Authorization: Bearer gb_live_..."
+```
+
+---
+
 ## Endpoints
 
 ### Health
 
 #### `GET /health`
 
-Health check. No authentication required.
+Health check with detection engine metrics. No authentication required.
 
 ```bash
 curl http://127.0.0.1:8013/health
@@ -168,7 +186,12 @@ curl http://127.0.0.1:8013/health
 {
   "status": "healthy",
   "app": "GhostBill",
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "detection": {
+    "last_scan_at": "2026-04-25T10:00:00Z",
+    "blocks_behind": 0,
+    "height": 3650000
+  }
 }
 ```
 
@@ -186,10 +209,9 @@ Register a new merchant. Returns live + test API keys (**shown once**).
 curl -X POST http://127.0.0.1:8013/v1/merchants \
   -H "Content-Type: application/json" \
   -d '{
-    "primary_address": "4AdUndXHHZ6cfufTMvppY6JwXNouMBzSkbLYfpAV5Usx3skxNgYeYTRJ5UptMnMVf...",
+    "primary_address": "4AdUndXHHZ6cfufTMvppY6JwXNouMBzSkbLYfpAV5Usx...",
     "view_key": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
     "name": "My Store",
-    "email": "merchant@example.com",
     "webhook_url": "https://mystore.com/webhooks/ghostbill"
   }'
 ```
@@ -204,35 +226,17 @@ curl -X POST http://127.0.0.1:8013/v1/merchants \
 | `email` | string | | Contact email |
 | `webhook_url` | string | | Webhook delivery URL |
 
-**Response 201:**
+**Response 201:** Returns merchant_id, API keys (live + test), and webhook_secret.
 
-```json
-{
-  "merchant_id": "efbfeade-1234-5678-abcd-1234567890ab",
-  "name": "My Store",
-  "environment": "live",
-  "api_keys": {
-    "live": "gb_live_5d347e8b575d6d546f7f8af504461ce7",
-    "test": "gb_test_a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
-  },
-  "webhook_secret": "whsec_7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c",
-  "message": "Store your API keys securely. They will NOT be shown again."
-}
-```
-
-> ⚠️ **The API keys and webhook secret are shown ONCE.** Store them immediately in a secure location.
-
-**Security note:** The `view_key` is encrypted with AES-256-GCM before storage. GhostBill operates in **view-only mode** — it cannot spend your funds.
+> ⚠️ **The API keys and webhook secret are shown ONCE.** Store them immediately.
 
 ---
 
 #### `GET /v1/merchants/me` — Get Merchant Profile
 
-Get current authenticated merchant profile.
-
 ```bash
 curl http://127.0.0.1:8013/v1/merchants/me \
-  -H "Authorization: Bearer gb_live_5d347e8b575d6d546f7f8af504461ce7"
+  -H "Authorization: Bearer gb_live_..."
 ```
 
 **Response 200:**
@@ -242,8 +246,9 @@ curl http://127.0.0.1:8013/v1/merchants/me \
   "id": "efbfeade-1234-5678-abcd-1234567890ab",
   "name": "My Store",
   "email": "merchant@example.com",
-  "monero_address": "4AdUndXHHZ6cfufTMvppY6JwXNouMBzSkbLYfpAV5Usx...",
+  "monero_address": "4AdUndXHHZ6...",
   "webhook_url": "https://mystore.com/webhooks/ghostbill",
+  "prepay_plans": [{"periods": 3, "discount_pct": 5}],
   "environment": "live",
   "is_active": true,
   "created_at": "2026-02-13T01:00:00Z",
@@ -255,17 +260,7 @@ curl http://127.0.0.1:8013/v1/merchants/me \
 
 #### `PATCH /v1/merchants/me` — Update Merchant Profile
 
-Update name, email, or webhook URL.
-
-```bash
-curl -X PATCH http://127.0.0.1:8013/v1/merchants/me \
-  -H "Authorization: Bearer gb_live_5d347e8b575d6d546f7f8af504461ce7" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Updated Store Name",
-    "webhook_url": "https://newdomain.com/webhooks"
-  }'
-```
+Update name, email, webhook URL, or prepay plans configuration.
 
 **Request body (all fields optional):**
 
@@ -274,17 +269,17 @@ curl -X PATCH http://127.0.0.1:8013/v1/merchants/me \
 | `name` | string | New display name (max 255) |
 | `email` | string | New contact email (max 255) |
 | `webhook_url` | string | New webhook URL (max 2048) |
+| `prepay_plans` | array | Pre-payment plan configurations |
 
-**Response 200:**
+**Prepay plans format:**
 
 ```json
 {
-  "id": "efbfeade-1234-5678-abcd-1234567890ab",
-  "name": "Updated Store Name",
-  "email": "merchant@example.com",
-  "webhook_url": "https://newdomain.com/webhooks",
-  "updated_at": "2026-02-13T02:00:00Z",
-  "message": "Merchant updated successfully."
+  "prepay_plans": [
+    {"periods": 3, "discount_pct": 5},
+    {"periods": 6, "discount_pct": 10},
+    {"periods": 12, "discount_pct": 15}
+  ]
 }
 ```
 
@@ -294,21 +289,7 @@ curl -X PATCH http://127.0.0.1:8013/v1/merchants/me \
 
 Generate a new webhook signing secret. The old secret is immediately invalidated.
 
-```bash
-curl -X POST http://127.0.0.1:8013/v1/merchants/me/webhook-secret \
-  -H "Authorization: Bearer gb_live_5d347e8b575d6d546f7f8af504461ce7"
-```
-
-**Response 200:**
-
-```json
-{
-  "webhook_secret": "whsec_9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d",
-  "message": "New webhook secret generated. Update your integration."
-}
-```
-
-> ⚠️ **The new secret is shown ONCE.** Update your webhook verification code immediately.
+**Response 200:** Returns new `webhook_secret` (shown once).
 
 ---
 
@@ -320,47 +301,21 @@ Create a new invoice with a unique Monero subaddress for payment.
 
 ```bash
 curl -X POST http://127.0.0.1:8013/v1/invoices \
-  -H "Authorization: Bearer gb_live_5d347e8b575d6d546f7f8af504461ce7" \
+  -H "Authorization: Bearer gb_live_..." \
   -H "Content-Type: application/json" \
-  -d '{
-    "amount_xmr": "0.5",
-    "description": "Order #12345",
-    "expires_in": 3600,
-    "metadata": {"order_id": "12345", "customer": "alice"}
-  }'
+  -d '{"amount_xmr": "0.5", "description": "Order #12345", "expires_in": 3600}'
 ```
 
 **Request body:**
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `amount_xmr` | string | ✅ | XMR amount as string (e.g., `"0.5"`, `"1.25"`) |
+| `amount_xmr` | string | ✅ | XMR amount as string (e.g., `"0.5"`) |
 | `description` | string | | Invoice description (max 1024) |
 | `expires_in` | integer | | Seconds until expiry: 600–86400 (default: 3600) |
 | `metadata` | object | | Arbitrary JSON metadata |
 
-**Response 201:**
-
-```json
-{
-  "id": "a1b2c3d4-5678-90ab-cdef-1234567890ab",
-  "merchant_id": "efbfeade-1234-5678-abcd-1234567890ab",
-  "amount_xmr": "0.500000000000",
-  "amount_atomic": 500000000000,
-  "fiat_currency": "USD",
-  "fiat_amount": "72.50",
-  "fiat_rate": "145.00",
-  "status": "pending",
-  "description": "Order #12345",
-  "metadata": {"order_id": "12345", "customer": "alice"},
-  "address": "8BxyzSubaddressForThisInvoice...",
-  "address_index": 42,
-  "expires_at": "2026-02-13T05:00:00Z",
-  "paid_at": null,
-  "created_at": "2026-02-13T04:00:00Z",
-  "updated_at": "2026-02-13T04:00:00Z"
-}
-```
+**Response 201:** Returns `InvoiceResponse` with status `pending`, generated subaddress, and fiat conversion.
 
 **Invoice statuses:**
 
@@ -378,251 +333,390 @@ curl -X POST http://127.0.0.1:8013/v1/invoices \
 
 #### `GET /v1/invoices` — List Invoices
 
-List invoices for the authenticated merchant with optional filtering and pagination.
-
 ```bash
-# List all invoices
-curl http://127.0.0.1:8013/v1/invoices \
-  -H "Authorization: Bearer gb_live_5d347e8b575d6d546f7f8af504461ce7"
-
-# Filter by status with pagination
-curl "http://127.0.0.1:8013/v1/invoices?status=pending&limit=10&offset=0" \
-  -H "Authorization: Bearer gb_live_5d347e8b575d6d546f7f8af504461ce7"
+curl "http://127.0.0.1:8013/v1/invoices?status=pending&limit=10" \
+  -H "Authorization: Bearer gb_live_..."
 ```
 
 **Query parameters:**
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `status` | string | | Filter by invoice status |
-| `limit` | integer | 50 | Results per page (1–100) |
-| `offset` | integer | 0 | Pagination offset |
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `status` | string | Filter by invoice status |
+| `limit` | integer | Results per page (1–100, default 50) |
+| `starting_after` | UUID | Cursor for next page |
+| `ending_before` | UUID | Cursor for previous page |
 
 **Response 200:**
 
 ```json
 {
-  "invoices": [
-    {
-      "id": "a1b2c3d4-5678-90ab-cdef-1234567890ab",
-      "merchant_id": "efbfeade-...",
-      "amount_xmr": "0.500000000000",
-      "amount_atomic": 500000000000,
-      "status": "pending",
-      "address": "8Bxyz...",
-      "expires_at": "2026-02-13T05:00:00Z",
-      "..."
-    }
-  ],
-  "total": 42,
-  "limit": 50,
-  "offset": 0
+  "data": [{"id": "...", "status": "pending", "amount_xmr": "0.5", "...": "..."}],
+  "has_more": true
 }
 ```
 
 ---
 
-#### `GET /v1/invoices/{invoice_id}` — Get Invoice
+#### `GET /v1/invoices/{invoice_id}` — Get Invoice Detail
 
-Get a single invoice by UUID.
+Get a single invoice with payment details and paid amount.
 
-```bash
-curl http://127.0.0.1:8013/v1/invoices/a1b2c3d4-5678-90ab-cdef-1234567890ab \
-  -H "Authorization: Bearer gb_live_5d347e8b575d6d546f7f8af504461ce7"
-```
+**Response 200:** Returns `InvoiceDetailResponse` — includes all `InvoiceResponse` fields plus:
 
-**Response 200:** Same as `InvoiceResponse` above.
-
-**Response 404:**
-
-```json
-{
-  "detail": "Invoice not found"
-}
-```
+| Field | Type | Description |
+|-------|------|-------------|
+| `paid_atomic` | integer | Total piconero received (excluding orphaned) |
+| `paid_xmr` | string | Total XMR received |
+| `payments` | array | List of payments with tx_hash, amount, status, confirmations |
 
 ---
 
 #### `POST /v1/invoices/{invoice_id}/cancel` — Cancel Invoice
 
-Cancel a pending invoice. **Only invoices with status `pending` and zero payments can be cancelled.**
-
-```bash
-curl -X POST http://127.0.0.1:8013/v1/invoices/a1b2c3d4-5678-90ab-cdef-1234567890ab/cancel \
-  -H "Authorization: Bearer gb_live_5d347e8b575d6d546f7f8af504461ce7"
-```
-
-**Response 200:** Returns the invoice with `"status": "cancelled"`.
-
-**Response 400:**
-
-```json
-{
-  "detail": "Only pending invoices with no payments can be cancelled"
-}
-```
+Cancel a pending invoice. Only invoices with `status=pending` and zero payments can be cancelled.
 
 ---
 
 ### Payments
 
-Payments are **read-only** — they are created automatically by the detection engine when Monero transactions are detected on an invoice's subaddress.
+Payments are **read-only** — created automatically by the detection engine when Monero transactions are detected.
 
 #### `GET /v1/payments` — List Payments
 
 ```bash
-# List all payments
-curl http://127.0.0.1:8013/v1/payments \
-  -H "Authorization: Bearer gb_live_5d347e8b575d6d546f7f8af504461ce7"
-
-# Filter by invoice
-curl "http://127.0.0.1:8013/v1/payments?invoice_id=a1b2c3d4-5678-90ab-cdef-1234567890ab" \
-  -H "Authorization: Bearer gb_live_5d347e8b575d6d546f7f8af504461ce7"
-
-# Filter by status
 curl "http://127.0.0.1:8013/v1/payments?status=confirmed&limit=20" \
-  -H "Authorization: Bearer gb_live_5d347e8b575d6d546f7f8af504461ce7"
+  -H "Authorization: Bearer gb_live_..."
 ```
 
 **Query parameters:**
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `invoice_id` | string | | Filter by invoice UUID |
-| `status` | string | | Filter: `detected`, `confirmed`, `orphaned` |
-| `limit` | integer | 50 | Results per page (1–100) |
-| `offset` | integer | 0 | Pagination offset |
-
-**Response 200:**
-
-```json
-{
-  "payments": [
-    {
-      "id": "pay-uuid-here",
-      "invoice_id": "a1b2c3d4-5678-90ab-cdef-1234567890ab",
-      "tx_hash": "7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e",
-      "amount_atomic": 500000000000,
-      "amount_xmr": "0.500000000000",
-      "status": "confirmed",
-      "confirmations": 12,
-      "block_height": 3608850,
-      "detected_at": "2026-02-13T04:15:00Z",
-      "confirmed_at": "2026-02-13T04:35:00Z",
-      "created_at": "2026-02-13T04:15:00Z"
-    }
-  ],
-  "total": 1,
-  "limit": 50,
-  "offset": 0
-}
-```
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `invoice_id` | UUID | Filter by invoice |
+| `status` | string | Filter: `detected`, `confirmed`, `orphaned` |
+| `limit` | integer | Results per page (1–100) |
+| `starting_after` / `ending_before` | UUID | Cursor pagination |
 
 **Payment statuses:**
 
 | Status | Description |
 |--------|-------------|
-| `detected` | Transaction seen in mempool (`pool: true`) |
+| `detected` | Transaction seen in mempool |
 | `confirmed` | Transaction has ≥ 10 confirmations |
-| `orphaned` | Transaction disappeared from mempool/chain (double-spend or reorg) |
+| `orphaned` | Transaction disappeared (double-spend or reorg) |
 
 ---
 
 #### `GET /v1/payments/{payment_id}` — Get Payment
 
-```bash
-curl http://127.0.0.1:8013/v1/payments/pay-uuid-here \
-  -H "Authorization: Bearer gb_live_5d347e8b575d6d546f7f8af504461ce7"
-```
-
-**Response 200:** Same as `PaymentResponse` above.
+Get a single payment with full details including tx_hash, block_height, and confirmation count.
 
 ---
 
-### Webhooks
+### Customers
 
-#### `GET /v1/webhooks` — List Webhook Deliveries
+#### `POST /v1/customers` — Create Customer
+
+Create a new customer for the authenticated merchant. Required for creating subscriptions.
 
 ```bash
-# List all deliveries
-curl http://127.0.0.1:8013/v1/webhooks \
-  -H "Authorization: Bearer gb_live_5d347e8b575d6d546f7f8af504461ce7"
-
-# Filter by invoice and status
-curl "http://127.0.0.1:8013/v1/webhooks?invoice_id=a1b2c3d4-...&status=failed" \
-  -H "Authorization: Bearer gb_live_5d347e8b575d6d546f7f8af504461ce7"
+curl -X POST http://127.0.0.1:8013/v1/customers \
+  -H "Authorization: Bearer gb_live_..." \
+  -H "Content-Type: application/json" \
+  -d '{"external_id": "user_123", "email": "alice@example.com", "metadata": {"plan": "pro"}}'
 ```
 
-**Query parameters:**
+**Request body (all fields optional):**
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `invoice_id` | string | | Filter by invoice UUID |
-| `status` | string | | Filter: `pending`, `delivered`, `failed` |
-| `limit` | integer | 50 | Results per page (1–100) |
-| `offset` | integer | 0 | Pagination offset |
+| Field | Type | Description |
+|-------|------|-------------|
+| `external_id` | string | Your system's customer ID (max 255, unique per merchant) |
+| `email` | string | Customer email (max 255) |
+| `metadata` | object | Arbitrary JSON metadata |
+
+**Response 201:**
+
+```json
+{
+  "id": "cust-uuid-here",
+  "merchant_id": "efbfeade-...",
+  "external_id": "user_123",
+  "email": "alice@example.com",
+  "metadata": {"plan": "pro"},
+  "created_at": "2026-04-25T10:00:00Z"
+}
+```
+
+**Response 409:** `external_id` already exists for this merchant.
+
+---
+
+#### `GET /v1/customers` — List Customers
+
+Cursor-paginated list. Query params: `limit`, `starting_after`, `ending_before`.
+
+---
+
+#### `GET /v1/customers/{customer_id}` — Get Customer
+
+---
+
+#### `PATCH /v1/customers/{customer_id}` — Update Customer
+
+Update `external_id`, `email`, or `metadata`. Only provided fields are changed.
+
+---
+
+### Subscriptions
+
+#### `POST /v1/subscriptions` — Create Subscription
+
+Create a recurring billing subscription for a customer.
+
+```bash
+curl -X POST http://127.0.0.1:8013/v1/subscriptions \
+  -H "Authorization: Bearer gb_live_..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "customer_id": "cust-uuid-here",
+    "amount_xmr": "0.1",
+    "interval_days": 30,
+    "grace_days_soft": 3,
+    "grace_days_hard": 7,
+    "trial_days": 14
+  }'
+```
+
+**Request body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `customer_id` | string | ✅ | Customer UUID |
+| `amount_xmr` | string | ✅ | XMR amount per billing period |
+| `interval_days` | integer | ✅ | Billing interval in days (≥ 1) |
+| `grace_days_soft` | integer | | Days before `past_due` (default: 3) |
+| `grace_days_hard` | integer | | Days before `expired` (default: 7) |
+| `start_at` | string | | ISO datetime for first billing (default: now) |
+| `trial_days` | integer | | Trial period 1–365 days (no invoice until trial ends) |
+| `metadata` | object | | Arbitrary JSON metadata |
+
+**Response 201:** Returns `SubscriptionDetailResponse` with status `active` (or `trialing` if trial_days set).
+
+**Subscription statuses:**
+
+| Status | Description |
+|--------|-------------|
+| `active` | Subscription is active, invoices are generated |
+| `trialing` | Trial period active, no invoices yet |
+| `paused` | Paused by merchant, no renewals |
+| `past_due` | Renewal invoice unpaid past soft grace |
+| `cancelled` | Cancelled, no further renewals |
+| `expired` | Hard grace period exceeded |
+
+---
+
+#### `GET /v1/subscriptions` — List Subscriptions
+
+```bash
+curl "http://127.0.0.1:8013/v1/subscriptions?status=active&limit=20" \
+  -H "Authorization: Bearer gb_live_..."
+```
+
+**Query parameters:** `status`, `customer_id`, `limit`, `starting_after`, `ending_before`.
+
+---
+
+#### `GET /v1/subscriptions/{subscription_id}` — Get Subscription Detail
+
+Returns full subscription with customer info, payment history, and pending changes.
+
+---
+
+#### `GET /v1/subscriptions/{subscription_id}/renewal-log` — Renewal Event Log
+
+Cursor-paginated audit trail of every renewal attempt (success, skip, failure, grace).
+
+```bash
+curl "http://127.0.0.1:8013/v1/subscriptions/sub-uuid/renewal-log?limit=20" \
+  -H "Authorization: Bearer gb_live_..."
+```
 
 **Response 200:**
 
 ```json
 {
-  "deliveries": [
+  "data": [
     {
-      "id": "wh-delivery-uuid",
-      "merchant_id": "efbfeade-...",
-      "invoice_id": "a1b2c3d4-...",
-      "event_type": "payment.confirmed",
-      "payload": { "...": "..." },
-      "url": "https://mystore.com/webhooks/ghostbill",
-      "status": "delivered",
-      "attempts": 1,
-      "max_attempts": 7,
-      "last_attempt_at": "2026-02-13T04:36:00Z",
-      "next_retry_at": null,
-      "response_code": 200,
-      "response_body": "OK",
-      "created_at": "2026-02-13T04:35:00Z"
+      "id": "event-uuid",
+      "subscription_id": "sub-uuid",
+      "result": "renewed",
+      "invoice_id": "inv-uuid",
+      "error_message": null,
+      "details": {},
+      "created_at": "2026-04-25T00:00:00Z"
     }
   ],
-  "total": 1,
-  "limit": 50,
-  "offset": 0
+  "has_more": false
 }
 ```
+
+**Renewal result types:** `renewed`, `skipped_not_due`, `skipped_pending_invoice`, `grace_soft`, `grace_hard_expired`, `wallet_error`, `creation_error`, `trial_activated`, `prepay_active`, `prepay_cleared`.
+
+---
+
+#### `PATCH /v1/subscriptions/{subscription_id}` — Update Subscription
+
+Queue pending changes to be applied at next renewal. Metadata updates are immediate.
+
+```bash
+curl -X PATCH http://127.0.0.1:8013/v1/subscriptions/sub-uuid \
+  -H "Authorization: Bearer gb_live_..." \
+  -H "Content-Type: application/json" \
+  -d '{"amount_xmr": "0.2", "interval_days": 14}'
+```
+
+**Request body (all optional):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `amount_xmr` | string | New XMR amount (applied at next renewal) |
+| `interval_days` | integer | New billing interval (applied at next renewal) |
+| `grace_days_soft` | integer | New soft grace (applied at next renewal) |
+| `grace_days_hard` | integer | New hard grace (applied at next renewal) |
+| `metadata` | object | Updated metadata (applied immediately) |
+
+Pending changes are visible in the `pending_changes` field and `has_pending_changes: true`.
+
+---
+
+#### `POST /v1/subscriptions/{subscription_id}/pause` — Pause
+
+Pause an active subscription. No renewals are generated until resumed.
+
+---
+
+#### `POST /v1/subscriptions/{subscription_id}/resume` — Resume
+
+Resume a paused subscription. Next renewal is rescheduled.
+
+---
+
+#### `POST /v1/subscriptions/{subscription_id}/cancel` — Cancel
+
+Cancel a subscription. No further renewals. Cannot be undone.
+
+---
+
+#### `POST /v1/subscriptions/{subscription_id}/prepay` — Pre-Pay
+
+Pre-pay multiple billing periods with an optional discount.
+
+```bash
+curl -X POST http://127.0.0.1:8013/v1/subscriptions/sub-uuid/prepay \
+  -H "Authorization: Bearer gb_live_..." \
+  -H "Content-Type: application/json" \
+  -d '{"periods": 6}'
+```
+
+**Request body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `periods` | integer | ✅ | Number of periods to prepay (1–36) |
+
+The discount is determined by the merchant's `prepay_plans` configuration. If no matching plan exists, the request is rejected.
+
+**Response 201:**
+
+```json
+{
+  "subscription_id": "sub-uuid",
+  "invoice_id": "inv-uuid",
+  "periods": 6,
+  "discount_pct": 10,
+  "per_period_xmr": "0.100000000000",
+  "total_xmr": "0.540000000000",
+  "total_atomic": 540000000000,
+  "prepaid_until": "2026-10-25T00:00:00Z",
+  "invoice_expires_at": "2026-04-25T11:00:00Z"
+}
+```
+
+---
+
+### Webhooks & Dead Letter Queue
+
+#### `GET /v1/webhooks` — List Webhook Deliveries
+
+```bash
+curl "http://127.0.0.1:8013/v1/webhooks?status=failed&limit=10" \
+  -H "Authorization: Bearer gb_live_..."
+```
+
+**Query parameters:** `invoice_id`, `status` (`pending`, `delivered`, `failed`, `dead_lettered`), `limit`, `starting_after`, `ending_before`.
+
+**Webhook delivery statuses:**
+
+| Status | Description |
+|--------|-------------|
+| `pending` | Delivery queued or awaiting retry |
+| `delivered` | Endpoint returned HTTP `2xx` |
+| `failed` | Delivery failed but retries not exhausted |
+| `dead_lettered` | All 7 retries exhausted, moved to DLQ |
 
 ---
 
 #### `GET /v1/webhooks/{delivery_id}` — Get Webhook Delivery
 
-Get a single webhook delivery with full payload and response details.
-
-```bash
-curl http://127.0.0.1:8013/v1/webhooks/wh-delivery-uuid \
-  -H "Authorization: Bearer gb_live_5d347e8b575d6d546f7f8af504461ce7"
-```
-
-**Response 200:** Same as `WebhookDeliveryResponse` above.
+Full details including payload, response_code, response_body, attempt count, next_retry_at.
 
 ---
 
 #### `POST /v1/webhooks/{delivery_id}/retry` — Retry Webhook
 
-Manually retry a failed webhook delivery. Only deliveries with `status=failed` can be retried. Resets attempt counter and schedules immediate delivery.
+Manually retry a failed delivery. Resets attempt counter. Only `status=failed` can be retried.
+
+---
+
+#### `GET /v1/webhooks/dead-letters` — List Dead Letter Queue
+
+List webhook deliveries that exhausted all 7 retry attempts.
 
 ```bash
-curl -X POST http://127.0.0.1:8013/v1/webhooks/wh-delivery-uuid/retry \
-  -H "Authorization: Bearer gb_live_5d347e8b575d6d546f7f8af504461ce7"
+curl "http://127.0.0.1:8013/v1/webhooks/dead-letters?resolved=false" \
+  -H "Authorization: Bearer gb_live_..."
 ```
 
-**Response 200:** Returns the delivery with reset `attempts` and `status=pending`.
+**Query parameters:** `resolved` (bool), `limit`, `starting_after`, `ending_before`.
 
-**Response 400:**
+**Response 200:**
 
 ```json
 {
-  "detail": "Only failed deliveries can be retried"
+  "data": [
+    {
+      "id": "dlq-uuid",
+      "delivery_id": "wh-delivery-uuid",
+      "merchant_id": "efbfeade-...",
+      "event_type": "invoice.paid",
+      "payload": {},
+      "original_created_at": "2026-04-20T10:00:00Z",
+      "dead_lettered_at": "2026-04-22T00:00:00Z",
+      "last_error": "Connection refused",
+      "retry_count": 0,
+      "resolved": false
+    }
+  ],
+  "has_more": false
 }
 ```
+
+---
+
+#### `POST /v1/webhooks/dead-letters/{dlq_id}/retry` — Retry from DLQ
+
+Create a new webhook delivery with the original payload. Resets the retry counter.
 
 ---
 
@@ -630,55 +724,17 @@ curl -X POST http://127.0.0.1:8013/v1/webhooks/wh-delivery-uuid/retry \
 
 #### `GET /v1/api-keys` — List API Keys
 
-List all API keys for the authenticated merchant. Keys are masked — only prefix, label, and metadata shown.
-
-```bash
-curl http://127.0.0.1:8013/v1/api-keys \
-  -H "Authorization: Bearer gb_live_5d347e8b575d6d546f7f8af504461ce7"
-```
-
-**Response 200:**
-
-```json
-{
-  "api_keys": [
-    {
-      "id": "key-uuid-1",
-      "key_prefix": "gb_live_5d34...",
-      "label": "Production Server",
-      "environment": "live",
-      "is_active": true,
-      "last_used_at": "2026-02-13T04:00:00Z",
-      "created_at": "2026-02-13T01:00:00Z"
-    },
-    {
-      "id": "key-uuid-2",
-      "key_prefix": "gb_test_a1b2...",
-      "label": null,
-      "environment": "test",
-      "is_active": true,
-      "last_used_at": null,
-      "created_at": "2026-02-13T01:00:00Z"
-    }
-  ],
-  "total": 2
-}
-```
+List all API keys for the authenticated merchant (masked — prefix only).
 
 ---
 
 #### `POST /v1/api-keys` — Create API Key
 
-Create a new API key. The full plaintext key is returned **once** in the response. Max 10 active keys per merchant.
-
 ```bash
 curl -X POST http://127.0.0.1:8013/v1/api-keys \
-  -H "Authorization: Bearer gb_live_5d347e8b575d6d546f7f8af504461ce7" \
+  -H "Authorization: Bearer gb_live_..." \
   -H "Content-Type: application/json" \
-  -d '{
-    "label": "Staging Server",
-    "environment": "test"
-  }'
+  -d '{"label": "Staging Server", "environment": "test"}'
 ```
 
 **Request body:**
@@ -688,17 +744,7 @@ curl -X POST http://127.0.0.1:8013/v1/api-keys \
 | `label` | string | `null` | Human-readable label (max 255) |
 | `environment` | string | `"live"` | `live` or `test` |
 
-**Response 201:**
-
-```json
-{
-  "id": "key-uuid-new",
-  "key": "gb_test_f1e2d3c4b5a6978869504132fabcde01",
-  "key_prefix": "gb_test_f1e2...",
-  "label": "Staging Server",
-  "environment": "test"
-}
-```
+**Response 201:** Returns full plaintext key (shown once), key_prefix, label, environment.
 
 > ⚠️ **The `key` field is shown ONCE.** It cannot be retrieved again.
 
@@ -706,26 +752,90 @@ curl -X POST http://127.0.0.1:8013/v1/api-keys \
 
 #### `DELETE /v1/api-keys/{key_id}` — Revoke API Key
 
-Revoke (deactivate) an API key. This is a **soft delete** — the key hash remains in the database for audit purposes. You cannot revoke the key currently being used for authentication.
+Soft-delete an API key. You cannot revoke the key currently being used for authentication.
+
+---
+
+### Analytics
+
+All analytics endpoints require merchant authentication. Results are cached in Redis (5-minute TTL).
+
+#### `GET /v1/analytics/revenue` — Revenue Over Time
 
 ```bash
-curl -X DELETE http://127.0.0.1:8013/v1/api-keys/key-uuid-1 \
-  -H "Authorization: Bearer gb_live_5d347e8b575d6d546f7f8af504461ce7"
+curl "http://127.0.0.1:8013/v1/analytics/revenue?period=30d" \
+  -H "Authorization: Bearer gb_live_..."
+```
+
+**Query parameters:**
+
+| Parameter | Type | Values | Default |
+|-----------|------|--------|---------|
+| `period` | string | `7d`, `30d`, `90d`, `1y` | `30d` |
+
+**Response 200:**
+
+```json
+{
+  "period": "30d",
+  "data": [
+    {"date": "2026-04-01", "count": 5, "amount_atomic": 2500000000000, "amount_xmr": "2.500000000000"},
+    {"date": "2026-04-02", "count": 3, "amount_atomic": 1500000000000, "amount_xmr": "1.500000000000"}
+  ],
+  "total_atomic": 4000000000000,
+  "total_xmr": "4.000000000000",
+  "total_payments": 8
+}
+```
+
+---
+
+#### `GET /v1/analytics/invoices` — Invoice Status Breakdown
+
+```bash
+curl "http://127.0.0.1:8013/v1/analytics/invoices?period_days=30" \
+  -H "Authorization: Bearer gb_live_..."
+```
+
+**Query parameters:** `period_days` (1–365, default 30).
+
+**Response 200:**
+
+```json
+{
+  "total": 42,
+  "data": [
+    {"status": "paid", "count": 30},
+    {"status": "expired", "count": 8},
+    {"status": "pending", "count": 4}
+  ],
+  "period_days": 30
+}
+```
+
+---
+
+#### `GET /v1/analytics/subscriptions` — Subscription Metrics
+
+```bash
+curl http://127.0.0.1:8013/v1/analytics/subscriptions \
+  -H "Authorization: Bearer gb_live_..."
 ```
 
 **Response 200:**
 
 ```json
 {
-  "message": "API key revoked"
-}
-```
-
-**Response 400:**
-
-```json
-{
-  "detail": "Cannot revoke the key currently in use"
+  "active": 85,
+  "paused": 3,
+  "past_due": 5,
+  "cancelled": 12,
+  "expired": 8,
+  "total": 113,
+  "mrr_atomic": 8500000000000,
+  "mrr_xmr": "8.500000000000",
+  "churn_30d": 4,
+  "new_30d": 15
 }
 ```
 
@@ -733,7 +843,7 @@ curl -X DELETE http://127.0.0.1:8013/v1/api-keys/key-uuid-1 \
 
 ### Dashboard Auth (Monero Signature)
 
-The dashboard uses a **passwordless authentication flow** based on Monero message signing. This is separate from API key authentication and is used exclusively by the web dashboard.
+Passwordless authentication flow based on Monero message signing. Used by the web dashboard.
 
 **Flow:**
 1. Request a nonce for your Monero address
@@ -747,60 +857,19 @@ The dashboard uses a **passwordless authentication flow** based on Monero messag
 
 Request a one-time nonce bound to a Monero address. Expires in 5 minutes.
 
-```bash
-curl -X POST http://127.0.0.1:8013/v1/auth/nonce \
-  -H "Content-Type: application/json" \
-  -d '{"address": "4AdUndXHHZ6cfufTMvppY6JwXNouMBzSkbLYfpAV5Usx3skxNgYeYTRJ5..."}'
-```
+**Request body:** `{"address": "4AdUndXHHZ6..."}`
 
-**Request body:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `address` | string | ✅ | Monero primary address (95 chars, starts with `4`) |
-
-**Response 200:**
-
-```json
-{
-  "nonce": "ghostbill_auth_a1b2c3d4e5f6a7b8...",
-  "expires_in": 300
-}
-```
+**Response 200:** `{"nonce": "ghostbill_auth_a1b2c3d4...", "expires_in": 300}`
 
 ---
 
 #### `POST /v1/auth/verify` — Verify Signature
 
-Verify the Monero signature and receive a session token. The nonce is consumed (single-use) regardless of verification result.
+Verify the Monero signature and receive a session token.
 
-```bash
-curl -X POST http://127.0.0.1:8013/v1/auth/verify \
-  -H "Content-Type: application/json" \
-  -d '{
-    "address": "4AdUndXHHZ6cfufTMvppY6JwXNouMBzSkbLYfpAV5Usx3skxNgYeYTRJ5...",
-    "nonce": "ghostbill_auth_a1b2c3d4e5f6a7b8...",
-    "signature": "SigV2..."
-  }'
-```
+**Request body:** `{"address": "...", "nonce": "...", "signature": "SigV2..."}`
 
-**Request body:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `address` | string | ✅ | Monero primary address |
-| `nonce` | string | ✅ | Nonce from `/auth/nonce` response |
-| `signature` | string | ✅ | Signature from `monero-wallet-cli sign` |
-
-**Response 200:**
-
-```json
-{
-  "session_token": "gbs_a1b2c3d4e5f6...64hexchars...",
-  "expires_in": 86400,
-  "merchant_id": "efbfeade-1234-5678-abcd-1234567890ab"
-}
-```
+**Response 200:** `{"session_token": "gbs_...", "expires_in": 86400, "merchant_id": "..."}`
 
 ---
 
@@ -808,25 +877,9 @@ curl -X POST http://127.0.0.1:8013/v1/auth/verify \
 
 Revoke a session token.
 
-```bash
-curl -X POST http://127.0.0.1:8013/v1/auth/logout \
-  -H "Content-Type: application/json" \
-  -d '{"session_token": "gbs_a1b2c3d4e5f6...64hexchars..."}'
-```
+**Request body:** `{"session_token": "gbs_..."}`
 
-**Request body:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `session_token` | string | ✅ | Session token (`gbs_...`) to revoke |
-
-**Response 200:**
-
-```json
-{
-  "revoked": true
-}
-```
+**Response 200:** `{"revoked": true}`
 
 ---
 
@@ -834,7 +887,7 @@ curl -X POST http://127.0.0.1:8013/v1/auth/logout \
 
 #### `GET /v1/price` — Get XMR Price
 
-Get current XMR price in USD and EUR. No authentication required. Data is cached in Redis and updated every 60 seconds by a background task.
+Current XMR price in USD and EUR. No authentication required. Cached in Redis, updated every 60 seconds.
 
 ```bash
 curl http://127.0.0.1:8013/v1/price
@@ -847,33 +900,126 @@ curl http://127.0.0.1:8013/v1/price
   "xmr_usd": "145.00",
   "xmr_eur": "133.50",
   "source": "coingecko",
-  "updated_at": "2026-02-13T04:00:00Z",
+  "updated_at": "2026-04-25T10:00:00Z",
   "stale": false
 }
 ```
 
-The `stale` field is `true` if the price data is older than 10 minutes, indicating potential issues with the price feed.
+The `stale` field is `true` if the price data is older than 10 minutes.
 
 ---
 
-## Pagination
+### Public Endpoints
 
-All list endpoints support offset-based pagination:
+These endpoints require **no authentication**. They are rate-limited via the public tier (300/min per IP).
 
+#### `GET /v1/invoices/{invoice_id}/public` — Public Invoice Data
+
+Get limited invoice data for the payment page. Response is filtered — never exposes merchant_id, metadata, webhook_url, or API keys.
+
+```bash
+curl http://127.0.0.1:8013/v1/invoices/inv-uuid/public
 ```
-GET /v1/invoices?limit=10&offset=20
-```
 
-The response includes `total`, `limit`, and `offset` fields to help navigate pages:
+**Response 200:**
 
 ```json
 {
-  "invoices": [...],
-  "total": 142,
-  "limit": 10,
-  "offset": 20
+  "id": "inv-uuid",
+  "amount_xmr": "0.500000000000",
+  "amount_atomic": 500000000000,
+  "fiat_amount": "72.50",
+  "fiat_currency": "USD",
+  "description": "Order #12345",
+  "address": "8BxyzSubaddress...",
+  "status": "pending",
+  "expires_at": "2026-04-25T11:00:00Z",
+  "created_at": "2026-04-25T10:00:00Z",
+  "confirmations": 0,
+  "confirmations_required": 10,
+  "paid_amount_atomic": 0,
+  "monero_uri": "monero:8Bxyz...?tx_amount=0.500000000000",
+  "qr_svg": "<svg>...</svg>"
 }
 ```
+
+---
+
+#### `GET /v1/invoices/{invoice_id}/events` — SSE Real-Time Updates
+
+Server-Sent Events stream for real-time invoice status updates. No authentication — UUID serves as access token.
+
+Polls DB every 3 seconds server-side, pushes only on changes. Auto-closes on terminal status (paid/expired/cancelled) or after 30 minutes.
+
+```javascript
+const es = new EventSource('/v1/invoices/<id>/events');
+es.addEventListener('update', (e) => render(JSON.parse(e.data)));
+es.addEventListener('close', () => es.close());
+```
+
+**Events:** `update` (full invoice data), `close` (terminal state or timeout).
+
+---
+
+#### `GET /pay/{invoice_id}` — Payment Page
+
+Serve standalone HTML payment page. Not included in OpenAPI schema.
+
+---
+
+### Admin (Operator)
+
+Admin endpoints are available only to the instance operator. The admin merchant is configured via `ADMIN_MERCHANT_ID` in `.env`. All endpoints require standard merchant authentication — the admin guard checks `merchant.id == ADMIN_MERCHANT_ID`.
+
+#### `GET /v1/admin/me` — Check Admin Status
+
+Soft check (returns bool, no 403). Used by the dashboard sidebar to conditionally show the Admin link.
+
+**Response 200:** `{"is_admin": true}`
+
+---
+
+#### `GET /v1/admin/merchants` — List All Merchants
+
+List all merchants with invoice and subscription counts.
+
+---
+
+#### `POST /v1/admin/merchants/{merchant_id}/toggle` — Toggle Merchant
+
+Activate or deactivate a merchant.
+
+---
+
+#### `GET /v1/admin/stats` — Global Statistics
+
+System-wide stats: total merchants, invoices, payments, revenue, subscriptions, DLQ entries.
+
+---
+
+#### `GET /v1/admin/health` — Detailed Health
+
+Detailed system health including DB connection pool, Redis memory usage, wallet-rpc block height, and detection engine status.
+
+---
+
+#### `GET /v1/admin/dlq` — Global Dead Letter Queue
+
+DLQ entries across all merchants (not scoped to admin's merchant).
+
+---
+
+#### `POST /v1/admin/dlq/{dlq_id}/retry` — Admin DLQ Retry
+
+Retry any DLQ entry regardless of merchant.
+
+---
+
+#### `POST /v1/admin/trigger-renewal` — Trigger Renewal Sweep
+
+Manually trigger the subscription renewal engine. Returns count of renewed/skipped/failed.
+
+**Response 200:** `{"renewed": 3, "skipped": 12, "failed": 0}`
 
 ---
 
@@ -886,4 +1032,4 @@ GhostBill supports `live` and `test` environments:
 | Live | `gb_live_` | Real Monero transactions |
 | Test | `gb_test_` | Testing and development |
 
-Each merchant receives both a live and test API key on registration. Keys are scoped to their environment — a `gb_test_` key can only access test resources.
+Each merchant receives both a live and test API key on registration. Keys are scoped to their environment.

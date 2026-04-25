@@ -1,6 +1,6 @@
 # GhostBill Webhooks
 
-GhostBill sends real-time webhook notifications to your server when payment and invoice events occur. All deliveries are signed with HMAC-SHA256 for verification.
+GhostBill sends real-time webhook notifications to your server when payment, invoice, and subscription events occur. All deliveries are signed with HMAC-SHA256 for verification.
 
 ---
 
@@ -8,12 +8,16 @@ GhostBill sends real-time webhook notifications to your server when payment and 
 
 - [Overview](#overview)
 - [Webhook Events](#webhook-events)
+  - [Payment Events](#payment-events)
+  - [Invoice Events](#invoice-events)
+  - [Subscription Events](#subscription-events)
 - [Delivery Format](#delivery-format)
 - [Signature Verification](#signature-verification)
   - [Python](#python)
   - [JavaScript (Node.js)](#javascript-nodejs)
   - [curl (testing)](#curl-testing)
 - [Retry Policy](#retry-policy)
+- [Dead Letter Queue](#dead-letter-queue)
 - [Delivery Log API](#delivery-log-api)
 - [Best Practices](#best-practices)
 
@@ -33,7 +37,7 @@ When you register a merchant, GhostBill generates a `webhook_secret` and deliver
 
 ## Webhook Events
 
-GhostBill dispatches **8 event types** across two categories:
+GhostBill dispatches **20 event types** across three categories:
 
 ### Payment Events
 
@@ -53,16 +57,47 @@ GhostBill dispatches **8 event types** across two categories:
 | `invoice.overpaid` | Confirmed amount > required amount | The customer sent more than required. You should arrange a refund for the excess. |
 | `invoice.late_paid` | Payment confirmed after invoice expired | A payment arrived and was confirmed after the invoice already expired. |
 
+### Subscription Events
+
+| Event | Trigger | Description |
+|-------|---------|-------------|
+| `subscription.created` | New subscription created | A new subscription was created for a customer. If trial_days is set, the subscription starts in `trialing` status. |
+| `subscription.renewed` | Renewal invoice created | A new billing period has started and a renewal invoice was generated. |
+| `subscription.past_due` | Renewal invoice unpaid past soft grace | The renewal invoice was not paid within the soft grace period. The subscription is now past due. |
+| `subscription.cancelled` | Merchant cancelled the subscription | The subscription was cancelled. No further renewals will be generated. |
+| `subscription.payment_confirmed` | Renewal payment confirmed | A payment for a subscription renewal invoice was confirmed on-chain. |
+| `subscription.updated` | Pending changes queued | The merchant updated the subscription (amount, interval, or grace periods). Changes will be applied at the next renewal. |
+| `subscription.paused` | Merchant paused the subscription | The subscription was paused. No renewals will be generated until resumed. |
+| `subscription.resumed` | Merchant resumed the subscription | The subscription was resumed from paused state. Next renewal is scheduled. |
+| `subscription.expired` | Hard grace period exceeded | The subscription expired because the renewal invoice was not paid within the hard grace period. |
+| `subscription.trial_started` | Trial period began | A subscription with trial_days was created. The trial period is active — no invoices are generated until it ends. |
+| `subscription.trial_ended` | Trial period ended | The trial period has ended. The subscription transitions to `active` and the first billing invoice is created. |
+| `subscription.prepaid` | Pre-payment invoice created | A pre-payment invoice was generated for multiple billing periods with an optional discount. |
+
 **Event flow for a typical successful payment:**
 
 ```
 payment.detected  →  payment.confirmed  →  invoice.paid
 ```
 
-**Event flow for partial payment:**
+**Event flow for subscription lifecycle:**
 
 ```
-payment.detected  →  payment.confirmed  →  invoice.partially_paid
+subscription.created  →  subscription.renewed  →  subscription.payment_confirmed
+                                                →  subscription.past_due  →  subscription.expired
+```
+
+**Event flow for trial subscription:**
+
+```
+subscription.created  →  subscription.trial_started
+→  subscription.trial_ended  →  subscription.renewed  →  subscription.payment_confirmed
+```
+
+**Event flow for pre-payment:**
+
+```
+subscription.prepaid  →  payment.detected  →  payment.confirmed  →  invoice.paid
 ```
 
 ---
@@ -74,14 +109,14 @@ Each webhook delivery is an HTTP POST to your `webhook_url` with the following s
 ### Headers
 
 | Header | Description | Example |
-|--------|-------------|---------|
+|--------|-------------|--------|
 | `Content-Type` | Always `application/json` | `application/json` |
 | `X-GhostBill-Signature` | HMAC-SHA256 hex digest of the request body | `a1b2c3d4e5f6...` |
 | `X-GhostBill-Event` | Event type | `payment.confirmed` |
 | `X-GhostBill-Event-ID` | Unique delivery ID (UUID) | `evt_a1b2c3d4-...` |
 | `X-GhostBill-Timestamp` | Unix timestamp of delivery | `1707739500` |
 
-### Payload
+### Payment/Invoice Payload
 
 ```json
 {
@@ -93,17 +128,17 @@ Each webhook delivery is an HTTP POST to your `webhook_url` with the following s
   "amount_xmr": "0.500000000000",
   "total_received_atomic": 500000000000,
   "confirmations": 10,
-  "tx_hash": "7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e",
+  "tx_hash": "7d8e9f0a1b2c...",
   "invoice_status": "paid",
   "timestamp": "2026-02-13T04:35:00Z"
 }
 ```
 
-### Payload Fields
+### Payment/Invoice Payload Fields
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `event` | string | Event type (one of the 8 events) |
+| `event` | string | Event type (one of the 20 events) |
 | `event_id` | string | Unique identifier for this delivery |
 | `invoice_id` | string (UUID) | Invoice this event relates to |
 | `payment_id` | string (UUID) or null | Payment that triggered this event (null for invoice-only events) |
@@ -113,6 +148,42 @@ Each webhook delivery is an HTTP POST to your `webhook_url` with the following s
 | `confirmations` | integer | Current confirmation count for the payment |
 | `tx_hash` | string or null | Monero transaction hash |
 | `invoice_status` | string | Current invoice status after this event |
+| `timestamp` | string (ISO 8601) | When the event occurred |
+
+### Subscription Payload
+
+```json
+{
+  "event": "subscription.renewed",
+  "event_id": "evt_b2c3d4e5-6789-01ab-cdef-234567890abc",
+  "subscription_id": "sub-uuid-here",
+  "customer_id": "cust-uuid-here",
+  "invoice_id": "inv-uuid-here",
+  "amount_atomic": 100000000000,
+  "amount_xmr": "0.100000000000",
+  "interval_days": 30,
+  "status": "active",
+  "next_due_at": "2026-04-13T00:00:00Z",
+  "timestamp": "2026-03-13T00:00:00Z"
+}
+```
+
+### Subscription Payload Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `event` | string | Event type (subscription.* event) |
+| `event_id` | string | Unique identifier for this delivery |
+| `subscription_id` | string (UUID) | Subscription this event relates to |
+| `customer_id` | string (UUID) | Customer who owns this subscription |
+| `invoice_id` | string (UUID) or null | Related invoice (for renewed, prepaid events) |
+| `amount_atomic` | integer | Subscription amount in piconero |
+| `amount_xmr` | string | Subscription amount as human-readable XMR string |
+| `interval_days` | integer | Billing interval in days |
+| `status` | string | Current subscription status after this event |
+| `next_due_at` | string (ISO 8601) or null | Next renewal date |
+| `trial_days` | integer or null | Trial period length (for trial events) |
+| `trial_end_at` | string (ISO 8601) or null | Trial end date (for trial events) |
 | `timestamp` | string (ISO 8601) | When the event occurred |
 
 ---
@@ -161,6 +232,12 @@ def handle_webhook():
         show_pending_status(event["invoice_id"])
     elif event_type == "payment.orphaned":
         revert_pending_status(event["invoice_id"])
+    elif event_type == "subscription.renewed":
+        log_renewal(event["subscription_id"], event["invoice_id"])
+    elif event_type == "subscription.expired":
+        deactivate_service(event["subscription_id"])
+    elif event_type == "subscription.trial_ended":
+        start_billing(event["subscription_id"])
 
     return "OK", 200
 ```
@@ -205,8 +282,14 @@ app.post("/webhooks/ghostbill", express.raw({ type: "application/json" }), (req,
         case "payment.detected":
             showPendingStatus(event.invoice_id);
             break;
-        case "payment.orphaned":
-            revertPendingStatus(event.invoice_id);
+        case "subscription.renewed":
+            logRenewal(event.subscription_id, event.invoice_id);
+            break;
+        case "subscription.expired":
+            deactivateService(event.subscription_id);
+            break;
+        case "subscription.trial_ended":
+            startBilling(event.subscription_id);
             break;
     }
 
@@ -261,13 +344,53 @@ If your endpoint doesn't return HTTP `2xx` within 10 seconds, GhostBill retries 
 | 6 | 12 hours | ~14.5 hours |
 | 7 | 24 hours | ~38.5 hours |
 
-After **7 failed attempts**, the delivery status is set to `failed` and automatic retries stop.
+After **7 failed attempts**, the delivery is moved to the Dead Letter Queue (DLQ) with status `dead_lettered`.
 
 **Timeout:** 10 seconds per delivery attempt.
 
 **Jitter:** A random delay of 50–200ms is added to each delivery for metadata protection.
 
 **Tor routing:** All outgoing webhook deliveries are routed through Tor SOCKS5 proxy, so your endpoint's IP is never exposed to GhostBill's server.
+
+---
+
+## Dead Letter Queue
+
+When a webhook delivery exhausts all 7 retry attempts, it is moved to the Dead Letter Queue (DLQ). DLQ entries preserve the original payload and error information for debugging.
+
+### List DLQ entries
+
+```bash
+curl http://127.0.0.1:8013/v1/webhooks/dead-letters \
+  -H "Authorization: Bearer gb_live_..."
+
+# Filter by resolved status
+curl "http://127.0.0.1:8013/v1/webhooks/dead-letters?resolved=false" \
+  -H "Authorization: Bearer gb_live_..."
+```
+
+### Retry a DLQ entry
+
+```bash
+curl -X POST http://127.0.0.1:8013/v1/webhooks/dead-letters/{dlq_id}/retry \
+  -H "Authorization: Bearer gb_live_..."
+```
+
+Retrying a DLQ entry creates a new webhook delivery with the original payload and resets the retry counter.
+
+### DLQ fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string (UUID) | DLQ entry ID |
+| `delivery_id` | string (UUID) | Original webhook delivery ID |
+| `event_type` | string | Original event type |
+| `payload` | object | Original webhook payload |
+| `original_created_at` | string (ISO 8601) | When the original delivery was created |
+| `dead_lettered_at` | string (ISO 8601) | When the delivery was moved to DLQ |
+| `last_error` | string or null | Last error message from the final retry attempt |
+| `retry_count` | integer | Number of manual retries from DLQ |
+| `resolved` | boolean | Whether this entry has been resolved |
 
 ---
 
@@ -278,7 +401,7 @@ You can inspect and manage webhook deliveries via the API. See the [API Referenc
 ### List deliveries
 
 ```bash
-# All deliveries
+# All deliveries (cursor pagination)
 curl http://127.0.0.1:8013/v1/webhooks \
   -H "Authorization: Bearer gb_live_..."
 
@@ -290,6 +413,8 @@ curl "http://127.0.0.1:8013/v1/webhooks?status=failed&limit=10" \
 curl "http://127.0.0.1:8013/v1/webhooks?invoice_id=a1b2c3d4-..." \
   -H "Authorization: Bearer gb_live_..."
 ```
+
+All list endpoints use cursor-based pagination with `starting_after`, `ending_before`, and `has_more`.
 
 ### Get delivery details
 
@@ -315,7 +440,8 @@ Resets the attempt counter and schedules immediate re-delivery. Only deliveries 
 |--------|-------------|
 | `pending` | Delivery queued or awaiting retry |
 | `delivered` | Endpoint returned HTTP `2xx` |
-| `failed` | All 7 retry attempts exhausted |
+| `failed` | Delivery failed but retries not yet exhausted |
+| `dead_lettered` | All 7 retry attempts exhausted, moved to DLQ |
 
 ---
 
@@ -331,12 +457,14 @@ Resets the attempt counter and schedules immediate re-delivery. Only deliveries 
 
 **5. Don't rely solely on `payment.detected`.** The `detected` status means the transaction is in the mempool but not yet confirmed. Wait for `payment.confirmed` or `invoice.paid` before fulfilling orders. A detected payment can become `orphaned`.
 
-**6. Monitor failed deliveries.** Check the webhook delivery log in the dashboard or via the API. If deliveries consistently fail, verify your endpoint URL, firewall rules, and TLS configuration.
+**6. Monitor the Dead Letter Queue.** Check the DLQ regularly via the dashboard or API (`GET /v1/webhooks/dead-letters`). Failed deliveries often indicate endpoint issues — fix the root cause, then retry from DLQ.
 
-**7. Rotate secrets periodically.** Use `POST /v1/merchants/me/webhook-secret` to regenerate your webhook secret. Update your verification code immediately after rotation — the old secret is invalidated instantly.
+**7. Handle subscription events.** For recurring billing, implement handlers for the key subscription events: `subscription.renewed` (new billing period), `subscription.payment_confirmed` (payment received), `subscription.past_due` (payment overdue), and `subscription.expired` (service should be deactivated).
 
-**8. Use HTTPS (or .onion).** Always use HTTPS for your webhook endpoint to protect the payload in transit. Alternatively, use a Tor hidden service (`.onion`) endpoint for maximum privacy.
+**8. Rotate secrets periodically.** Use `POST /v1/merchants/me/webhook-secret` to regenerate your webhook secret. Update your verification code immediately after rotation — the old secret is invalidated instantly.
 
-**9. Log everything.** Keep your own log of received webhooks for debugging and reconciliation. The `X-GhostBill-Event-ID` and `X-GhostBill-Timestamp` headers are useful for correlation.
+**9. Use HTTPS (or .onion).** Always use HTTPS for your webhook endpoint to protect the payload in transit. Alternatively, use a Tor hidden service (`.onion`) endpoint for maximum privacy.
 
-**10. Test with the delivery log.** Use `GET /v1/webhooks` to inspect what GhostBill sent, including the full payload and your endpoint's response code and body.
+**10. Log everything.** Keep your own log of received webhooks for debugging and reconciliation. The `X-GhostBill-Event-ID` and `X-GhostBill-Timestamp` headers are useful for correlation.
+
+**11. Test with the delivery log.** Use `GET /v1/webhooks` to inspect what GhostBill sent, including the full payload and your endpoint's response code and body.

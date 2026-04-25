@@ -100,6 +100,9 @@ export interface Invoice {
   created_at: string;
   updated_at: string;
   metadata: Record<string, unknown> | null;
+  // TODO: add to backend InvoiceResponse for invoice detail page
+  paid_atomic?: string;
+  payments?: Payment[];
 }
 
 // === Payment ===
@@ -197,6 +200,7 @@ export interface RenewalEvent {
 
 export interface WebhookDelivery {
   id: string;
+  merchant_id: string;
   invoice_id: string;
   event_type: string;
   url: string;
@@ -204,9 +208,10 @@ export interface WebhookDelivery {
   status: WebhookStatus;
   attempts: number;
   max_attempts: number;
+  last_attempt_at: string | null;
+  next_retry_at: string | null;
   response_code: number | null;
   response_body: string | null;
-  next_retry_at: string | null;
   created_at: string;
 }
 

@@ -137,7 +137,7 @@ export default function InvoiceDetailPage() {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left column — details */}
+        {/* Left column \u2014 details */}
         <div className="lg:col-span-2 space-y-6">
           {/* Amounts */}
           <div className="gb-card space-y-4">
@@ -163,7 +163,7 @@ export default function InvoiceDetailPage() {
                   Received
                 </p>
                 <p className="text-xl font-mono font-bold text-gb-text-primary mt-1">
-                  {formatXMR(invoice.paid_atomic)} XMR
+                  {formatXMR(invoice.paid_atomic || "0")} XMR
                 </p>
                 {/* Progress bar */}
                 <div className="mt-2 h-1.5 bg-gb-border/30 rounded-full overflow-hidden">
@@ -186,13 +186,11 @@ export default function InvoiceDetailPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
               <div>
                 <p className="text-gb-text-secondary">Description</p>
-                <p className="text-gb-text-primary">{invoice.description || "—"}</p>
+                <p className="text-gb-text-primary">{invoice.description || "\u2014"}</p>
               </div>
               <div>
-                <p className="text-gb-text-secondary">External ID</p>
-                <p className="text-gb-text-primary font-mono">
-                  {invoice.external_id || "—"}
-                </p>
+                <p className="text-gb-text-secondary">Status</p>
+                <p className="text-gb-text-primary">{invoice.status}</p>
               </div>
               <div>
                 <p className="text-gb-text-secondary">Created</p>
@@ -206,28 +204,32 @@ export default function InvoiceDetailPage() {
                 </p>
               </div>
               <div>
-                <p className="text-gb-text-secondary">Confirmations Required</p>
-                <p className="text-gb-text-primary">{invoice.confirmations_required}</p>
+                <p className="text-gb-text-secondary">Address Index</p>
+                <p className="text-gb-text-primary font-mono">{invoice.address_index ?? "\u2014"}</p>
               </div>
-              <div>
-                <p className="text-gb-text-secondary">Subaddress Index</p>
-                <p className="text-gb-text-primary font-mono">{invoice.subaddress_index}</p>
-              </div>
+              {invoice.paid_at && (
+                <div>
+                  <p className="text-gb-text-secondary">Paid At</p>
+                  <p className="text-gb-text-primary">{formatDate(invoice.paid_at)}</p>
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Subaddress */}
-          <div className="gb-card space-y-3">
-            <h2 className="font-heading text-lg font-semibold text-gb-text-primary">
-              Payment Address
-            </h2>
-            <div className="flex items-center gap-2 bg-gb-bg p-3 rounded-gb border border-gb-border">
-              <p className="font-mono text-xs text-gb-text-primary break-all flex-1">
-                {invoice.subaddress}
-              </p>
-              <CopyButton text={invoice.subaddress} label="" />
+          {/* Payment Address */}
+          {invoice.address && (
+            <div className="gb-card space-y-3">
+              <h2 className="font-heading text-lg font-semibold text-gb-text-primary">
+                Payment Address
+              </h2>
+              <div className="flex items-center gap-2 bg-gb-bg p-3 rounded-gb border border-gb-border">
+                <p className="font-mono text-xs text-gb-text-primary break-all flex-1">
+                  {invoice.address}
+                </p>
+                <CopyButton text={invoice.address} label="" />
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Payments */}
           <div className="gb-card space-y-3">
@@ -304,15 +306,15 @@ export default function InvoiceDetailPage() {
           </div>
         </div>
 
-        {/* Right column — QR code (only for pending) */}
+        {/* Right column \u2014 QR code (only for pending) */}
         <div className="space-y-6">
-          {isPending && (
+          {isPending && invoice.address && (
             <div className="gb-card flex flex-col items-center space-y-4">
               <h2 className="font-heading text-lg font-semibold text-gb-text-primary">
                 Scan to Pay
               </h2>
               <InvoiceQR
-                address={invoice.subaddress}
+                address={invoice.address}
                 amountXmr={invoice.amount_xmr}
               />
               <p className="text-xs text-gb-text-secondary text-center">

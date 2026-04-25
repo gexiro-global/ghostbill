@@ -14,7 +14,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import { ApiKey, ApiKeyCreated, ApiKeyListResponse, Merchant, WebhookDelivery, WebhookDeliveryListResponse } from "@/lib/types";
+import { ApiKey, ApiKeyCreated, CursorResponse, Merchant, WebhookDelivery } from "@/lib/types";
 import { formatDate, timeAgo } from "@/lib/format";
 import CopyButton from "@/components/CopyButton";
 import ConfirmDialog from "@/components/ConfirmDialog";
@@ -67,8 +67,8 @@ function ApiKeysSection() {
     try {
       setLoading(true);
       setError(null);
-      const data = await api.get<ApiKeyListResponse>("/api-keys");
-      setKeys(data.api_keys);
+      const data = await api.get<CursorResponse<ApiKey>>("/api-keys?limit=100");
+      setKeys(data.data);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load API keys");
     } finally {
@@ -168,7 +168,7 @@ function ApiKeysSection() {
               {keys.map((k) => (
                 <tr key={k.id} className="hover:bg-gb-bg/50">
                   <td className="py-3 text-gb-text-primary font-medium">
-                    {k.label || "—"}
+                    {k.label || "\u2014"}
                   </td>
                   <td className="py-3 font-mono text-gb-text-secondary">
                     {k.key_prefix}...
@@ -190,7 +190,7 @@ function ApiKeysSection() {
                     </span>
                   </td>
                   <td className="py-3 text-gb-text-secondary">
-                    {k.created_at ? timeAgo(k.created_at) : "—"}
+                    {k.created_at ? timeAgo(k.created_at) : "\u2014"}
                   </td>
                   <td className="py-3 text-gb-text-secondary">
                     {k.last_used_at ? timeAgo(k.last_used_at) : "Never"}
@@ -228,7 +228,7 @@ function ApiKeysSection() {
                 </h3>
                 <div className="bg-gb-warning/10 border border-gb-warning/30 rounded-gb p-3 mb-4">
                   <p className="text-sm text-gb-warning font-medium">
-                    Copy this key now — it will not be shown again!
+                    Copy this key now \u2014 it will not be shown again!
                   </p>
                 </div>
                 <div className="bg-gb-bg border border-gb-border rounded-gb p-4 mb-4">
@@ -240,7 +240,7 @@ function ApiKeysSection() {
                   </div>
                 </div>
                 <div className="text-sm text-gb-text-secondary space-y-1 mb-6">
-                  <p>Label: <span className="text-gb-text-primary">{newKey.label || "—"}</span></p>
+                  <p>Label: <span className="text-gb-text-primary">{newKey.label || "\u2014"}</span></p>
                   <p>Environment: <span className={newKey.environment === "live" ? "text-gb-success" : "text-gb-warning"}>{newKey.environment.toUpperCase()}</span></p>
                 </div>
                 <button onClick={closeCreateModal} className="gb-btn-secondary w-full text-sm !py-2">
@@ -402,7 +402,7 @@ function WebhookConfigSection() {
   };
 
   const maskedSecret = merchant?.webhook_secret
-    ? merchant.webhook_secret.slice(0, 8) + "••••••••••••••••"
+    ? merchant.webhook_secret.slice(0, 8) + "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
     : null;
 
   const urlChanged = webhookUrl.trim() !== (merchant?.webhook_url || "");
@@ -518,17 +518,19 @@ function WebhookConfigSection() {
 }
 
 /* ==========================================================================
-   SECTION 3: WEBHOOK DELIVERY LOG
+   SECTION 3: WEBHOOK DELIVERY LOG (cursor pagination, Phase 6B+)
    ========================================================================== */
+
+const DELIVERY_LIMIT = 20;
 
 function WebhookLogSection() {
   const { toast } = useToast();
   const [deliveries, setDeliveries] = useState<WebhookDelivery[]>([]);
-  const [total, setTotal] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [prevCursors, setPrevCursors] = useState<(string | null)[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [offset, setOffset] = useState(0);
-  const limit = 20;
 
   // JSON viewer
   const [viewPayload, setViewPayload] = useState<WebhookDelivery | null>(null);
@@ -540,21 +542,44 @@ function WebhookLogSection() {
     try {
       setLoading(true);
       setError(null);
-      const data = await api.get<WebhookDeliveryListResponse>(
-        `/webhooks?limit=${limit}&offset=${offset}`
+      const params = new URLSearchParams();
+      params.set("limit", DELIVERY_LIMIT.toString());
+      if (cursor) params.set("starting_after", cursor);
+
+      const data = await api.get<CursorResponse<WebhookDelivery>>(
+        `/webhooks?${params}`
       );
-      setDeliveries(data.deliveries);
-      setTotal(data.total);
+      setDeliveries(data.data);
+      setHasMore(data.has_more);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load deliveries");
     } finally {
       setLoading(false);
     }
-  }, [offset]);
+  }, [cursor]);
 
   useEffect(() => {
     fetchDeliveries();
   }, [fetchDeliveries]);
+
+  const handleNext = () => {
+    if (deliveries.length === 0 || !hasMore) return;
+    setPrevCursors([...prevCursors, cursor]);
+    setCursor(deliveries[deliveries.length - 1].id);
+  };
+
+  const handlePrev = () => {
+    if (prevCursors.length === 0) return;
+    const prev = prevCursors[prevCursors.length - 1];
+    setPrevCursors(prevCursors.slice(0, -1));
+    setCursor(prev);
+  };
+
+  const handleRefresh = () => {
+    setCursor(null);
+    setPrevCursors([]);
+    fetchDeliveries();
+  };
 
   const handleRetry = async (id: string) => {
     try {
@@ -569,10 +594,10 @@ function WebhookLogSection() {
     }
   };
 
-  const statusColor = (status: number | null) => {
-    if (!status) return "text-gb-text-secondary";
-    if (status >= 200 && status < 300) return "text-gb-success";
-    if (status >= 400) return "text-gb-error";
+  const statusColor = (code: number | null) => {
+    if (!code) return "text-gb-text-secondary";
+    if (code >= 200 && code < 300) return "text-gb-success";
+    if (code >= 400) return "text-gb-error";
     return "text-gb-warning";
   };
 
@@ -584,14 +609,9 @@ function WebhookLogSection() {
           <h2 className="text-lg font-heading font-semibold text-gb-text-primary">
             Delivery Log
           </h2>
-          {total > 0 && (
-            <span className="text-xs text-gb-text-secondary bg-gb-bg px-2 py-0.5 rounded-full">
-              {total}
-            </span>
-          )}
         </div>
         <button
-          onClick={fetchDeliveries}
+          onClick={handleRefresh}
           disabled={loading}
           className="text-gb-text-secondary hover:text-gb-accent transition-colors p-2"
           title="Refresh"
@@ -620,8 +640,9 @@ function WebhookLogSection() {
               <thead>
                 <tr className="text-left text-gb-text-secondary border-b border-gb-border">
                   <th className="pb-3 font-medium">Event</th>
+                  <th className="pb-3 font-medium">Response</th>
                   <th className="pb-3 font-medium">Status</th>
-                  <th className="pb-3 font-medium">Attempt</th>
+                  <th className="pb-3 font-medium">Attempts</th>
                   <th className="pb-3 font-medium">Time</th>
                   <th className="pb-3 font-medium text-right">Actions</th>
                 </tr>
@@ -631,19 +652,36 @@ function WebhookLogSection() {
                   <tr key={d.id} className="hover:bg-gb-bg/50">
                     <td className="py-3">
                       <span className="font-mono text-gb-text-primary text-xs">
-                        {d.event}
+                        {d.event_type}
                       </span>
                     </td>
                     <td className="py-3">
-                      <span className={`font-mono font-medium ${statusColor(d.response_status)}`}>
-                        {d.response_status ?? "—"}
+                      <span className={`font-mono font-medium ${statusColor(d.response_code)}`}>
+                        {d.response_code ?? "\u2014"}
+                      </span>
+                    </td>
+                    <td className="py-3">
+                      <span
+                        className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                          d.status === "delivered"
+                            ? "bg-gb-success/15 text-gb-success"
+                            : d.status === "failed" || d.status === "dead_lettered"
+                              ? "bg-gb-error/15 text-gb-error"
+                              : "bg-gb-warning/15 text-gb-warning"
+                        }`}
+                      >
+                        {d.status}
                       </span>
                     </td>
                     <td className="py-3 text-gb-text-secondary">
-                      {d.attempt}/{d.max_attempts}
+                      {d.attempts}/{d.max_attempts}
                     </td>
                     <td className="py-3 text-gb-text-secondary">
-                      {d.delivered_at ? timeAgo(d.delivered_at) : d.next_retry_at ? `retry ${timeAgo(d.next_retry_at)}` : "pending"}
+                      {d.last_attempt_at
+                        ? timeAgo(d.last_attempt_at)
+                        : d.next_retry_at
+                          ? `retry ${timeAgo(d.next_retry_at)}`
+                          : "pending"}
                     </td>
                     <td className="py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
@@ -654,21 +692,20 @@ function WebhookLogSection() {
                         >
                           <Eye className="w-4 h-4" />
                         </button>
-                        {d.response_status !== null &&
-                          (d.response_status < 200 || d.response_status >= 300) && (
-                            <button
-                              onClick={() => handleRetry(d.id)}
-                              disabled={retryingId === d.id}
-                              className="text-gb-text-secondary hover:text-gb-warning transition-colors p-1"
-                              title="Retry delivery"
-                            >
-                              {retryingId === d.id ? (
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                              ) : (
-                                <RotateCcw className="w-4 h-4" />
-                              )}
-                            </button>
-                          )}
+                        {(d.status === "failed" || d.status === "dead_lettered") && (
+                          <button
+                            onClick={() => handleRetry(d.id)}
+                            disabled={retryingId === d.id}
+                            className="text-gb-text-secondary hover:text-gb-warning transition-colors p-1"
+                            title="Retry delivery"
+                          >
+                            {retryingId === d.id ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <RotateCcw className="w-4 h-4" />
+                            )}
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -677,14 +714,13 @@ function WebhookLogSection() {
             </table>
           </div>
 
-          <div className="mt-4">
-            <Pagination
-              total={total}
-              limit={limit}
-              offset={offset}
-              onPageChange={setOffset}
-            />
-          </div>
+          <Pagination
+            hasMore={hasMore}
+            hasPrev={prevCursors.length > 0}
+            onNext={handleNext}
+            onPrev={handlePrev}
+            loading={loading}
+          />
         </>
       )}
 
@@ -692,7 +728,7 @@ function WebhookLogSection() {
       <JsonViewer
         open={!!viewPayload}
         onClose={() => setViewPayload(null)}
-        title={viewPayload ? `${viewPayload.event} — Payload` : "Payload"}
+        title={viewPayload ? `${viewPayload.event_type} \u2014 Payload` : "Payload"}
         data={viewPayload?.payload || null}
       />
     </div>

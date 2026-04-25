@@ -4,7 +4,7 @@ import { ArrowLeft, Loader2, Zap } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
-import type { Customer, CustomerListResponse, Price, Subscription } from "@/lib/types";
+import type { Customer, CursorResponse, Price, Subscription } from "@/lib/types";
 
 const INTERVAL_PRESETS = [
   { value: 7, label: "Weekly (7 days)" },

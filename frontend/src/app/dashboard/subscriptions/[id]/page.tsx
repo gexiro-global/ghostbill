@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -14,12 +14,14 @@ import {
   AlertTriangle,
   CreditCard,
   CalendarCheck,
+  RefreshCw,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { formatXMR, formatDate, timeAgo } from "@/lib/format";
 import { StatusBadge } from "@/components/StatusBadge";
 import CopyButton from "@/components/CopyButton";
-import type { Subscription, Price, PrepayResponse, Merchant } from "@/lib/types";
+import Pagination from "@/components/Pagination";
+import type { Subscription, Price, PrepayResponse, Merchant, CursorResponse, RenewalEvent } from "@/lib/types";
 
 export default function SubscriptionDetailPage() {
   const params = useParams();
@@ -44,10 +46,18 @@ export default function SubscriptionDetailPage() {
   const [prepayPeriods, setPrepayPeriods] = useState<number>(3);
   const [prepayResult, setPrepayResult] = useState<PrepayResponse | null>(null);
 
+  // Renewal log
+  const [renewalEvents, setRenewalEvents] = useState<RenewalEvent[]>([]);
+  const [renewalHasMore, setRenewalHasMore] = useState(false);
+  const [renewalCursor, setRenewalCursor] = useState<string | null>(null);
+  const [renewalPrevCursors, setRenewalPrevCursors] = useState<(string | null)[]>([]);
+  const [renewalLoading, setRenewalLoading] = useState(false);
+
   useEffect(() => {
     fetchSubscription();
     api.get<Price>("/price").then(setPrice).catch(() => {});
     api.get<Merchant>("/merchants/me").then(setMerchant).catch(() => {});
+    fetchRenewalLog();
   }, [id]);
 
   async function fetchSubscription() {
@@ -108,6 +118,24 @@ export default function SubscriptionDetailPage() {
     }
   }
 
+  const fetchRenewalLog = useCallback(async (cursor?: string | null) => {
+    setRenewalLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set("limit", "10");
+      if (cursor) params.set("starting_after", cursor);
+      const data = await api.get<CursorResponse<RenewalEvent>>(
+        `/subscriptions/${id}/renewal-log?${params}`
+      );
+      setRenewalEvents(data.data);
+      setRenewalHasMore(data.has_more);
+    } catch {
+      // Renewal log is non-critical, silently fail
+    } finally {
+      setRenewalLoading(false);
+    }
+  }, [id]);
+
   function fiatEstimate(amountAtomic: string): string {
     if (!price) return "";
     try {
@@ -117,6 +145,22 @@ export default function SubscriptionDetailPage() {
       return "";
     }
   }
+
+  const handleRenewalNext = () => {
+    if (renewalEvents.length === 0 || !renewalHasMore) return;
+    setRenewalPrevCursors([...renewalPrevCursors, renewalCursor]);
+    const nextCursor = renewalEvents[renewalEvents.length - 1].id;
+    setRenewalCursor(nextCursor);
+    fetchRenewalLog(nextCursor);
+  };
+
+  const handleRenewalPrev = () => {
+    if (renewalPrevCursors.length === 0) return;
+    const prev = renewalPrevCursors[renewalPrevCursors.length - 1];
+    setRenewalPrevCursors(renewalPrevCursors.slice(0, -1));
+    setRenewalCursor(prev);
+    fetchRenewalLog(prev);
+  };
 
   const plans = merchant?.prepay_plans || [];
   const canPrepay = sub?.status === "active" || sub?.status === "past_due";
@@ -434,6 +478,92 @@ export default function SubscriptionDetailPage() {
                   </tbody>
                 </table>
               </div>
+            )}
+          </div>
+                  {/* Renewal Log */}
+          <div className="gb-card space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="font-heading text-lg font-semibold text-gb-text-primary">
+                Renewal Log
+              </h2>
+              <button
+                onClick={() => { setRenewalCursor(null); setRenewalPrevCursors([]); fetchRenewalLog(null); }}
+                disabled={renewalLoading}
+                className="text-gb-text-secondary hover:text-gb-accent transition-colors p-1"
+                title="Refresh"
+              >
+                <RefreshCw className={`w-4 h-4 ${renewalLoading ? "animate-spin" : ""}`} />
+              </button>
+            </div>
+            {renewalLoading && renewalEvents.length === 0 ? (
+              <div className="flex items-center justify-center py-6">
+                <Loader2 className="w-5 h-5 text-gb-accent animate-spin" />
+              </div>
+            ) : renewalEvents.length === 0 ? (
+              <p className="text-sm text-gb-text-secondary py-4 text-center">
+                No renewal events yet
+              </p>
+            ) : (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-gb-border">
+                        <th className="text-left text-xs text-gb-text-secondary font-medium pb-2 pr-4">Result</th>
+                        <th className="text-left text-xs text-gb-text-secondary font-medium pb-2 pr-4">Invoice</th>
+                        <th className="text-left text-xs text-gb-text-secondary font-medium pb-2 pr-4">Error</th>
+                        <th className="text-right text-xs text-gb-text-secondary font-medium pb-2">Time</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {renewalEvents.map((evt) => (
+                        <tr key={evt.id} className="border-b border-gb-border/50 last:border-0">
+                          <td className="py-2 pr-4">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                              evt.result === "invoice_created" || evt.result === "trial_activated"
+                                ? "bg-gb-success/15 text-gb-success"
+                                : evt.result === "skipped_prepaid" || evt.result === "skipped_pending"
+                                  ? "bg-blue-500/15 text-blue-400"
+                                  : "bg-gb-error/15 text-gb-error"
+                            }`}>
+                              {evt.result.replace(/_/g, " ")}
+                            </span>
+                          </td>
+                          <td className="py-2 pr-4">
+                            {evt.invoice_id ? (
+                              <Link
+                                href={`/dashboard/invoices/${evt.invoice_id}`}
+                                className="font-mono text-xs text-gb-accent hover:underline"
+                              >
+                                {evt.invoice_id.slice(0, 8)}...
+                              </Link>
+                            ) : (
+                              <span className="text-gb-text-secondary">—</span>
+                            )}
+                          </td>
+                          <td className="py-2 pr-4">
+                            <span className="text-xs text-gb-text-secondary">
+                              {evt.error_message || "—"}
+                            </span>
+                          </td>
+                          <td className="py-2 text-right">
+                            <span className="text-xs text-gb-text-secondary">
+                              {timeAgo(evt.created_at)}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <Pagination
+                  hasMore={renewalHasMore}
+                  hasPrev={renewalPrevCursors.length > 0}
+                  onNext={handleRenewalNext}
+                  onPrev={handleRenewalPrev}
+                  loading={renewalLoading}
+                />
+              </>
             )}
           </div>
         </div>

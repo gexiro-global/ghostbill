@@ -17,6 +17,7 @@ Self-hosted deployment guide for GhostBill — a non-custodial Monero payment pr
   - [5. Database Migrations](#5-database-migrations)
   - [6. Tor Hidden Services (Optional)](#6-tor-hidden-services-optional)
 - [Verification](#verification)
+- [Admin Panel](#admin-panel)
 - [Backups](#backups)
 - [Monitoring](#monitoring)
 - [Updating](#updating)
@@ -227,6 +228,15 @@ echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)"
 > ⚠️ **Generate secrets on the server only.** Never generate or transmit secrets via chat, clipboard, or unencrypted channels.
 
 Edit `.env` with the generated values. See `.env.example` for all configuration options with descriptions.
+
+**Admin Panel (optional):**
+
+To enable the admin dashboard, set `ADMIN_MERCHANT_ID` in `.env` to the UUID of the merchant that should have admin access. This merchant will see an "Admin" link in the sidebar and can view system health, manage merchants, retry dead-lettered webhooks, and trigger renewal sweeps.
+
+```bash
+# Get the merchant UUID after registration
+ADMIN_MERCHANT_ID=your-merchant-uuid-here
+```
 
 ---
 
@@ -452,6 +462,34 @@ curl -X POST http://127.0.0.1:8013/v1/merchants \
   -H "Content-Type: application/json" \
   -d '{"primary_address": "YOUR_ADDRESS", "view_key": "YOUR_VIEW_KEY", "name": "Test"}'
 ```
+
+---
+
+## Admin Panel
+
+GhostBill includes an operator-level admin dashboard for managing your self-hosted instance.
+
+**Setup:**
+
+1. Register a merchant (or use your existing one)
+2. Set `ADMIN_MERCHANT_ID` in `.env` to that merchant's UUID
+3. Restart the backend: `docker compose up -d backend`
+4. Log in to the dashboard — the "Admin" link appears in the sidebar
+
+**Admin endpoints (8):**
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /v1/admin/me` | Check admin status (returns bool, no 403) |
+| `GET /v1/admin/merchants` | List all merchants with stats |
+| `POST /v1/admin/merchants/{id}/toggle` | Activate/deactivate merchant |
+| `GET /v1/admin/stats` | Global statistics |
+| `GET /v1/admin/health` | Detailed system health (DB pool, Redis, wallet-rpc, detection) |
+| `GET /v1/admin/dlq` | Dead Letter Queue entries across all merchants |
+| `POST /v1/admin/dlq/{id}/retry` | Retry a dead-lettered webhook |
+| `POST /v1/admin/trigger-renewal` | Trigger subscription renewal sweep |
+
+> The admin guard checks `merchant.id == ADMIN_MERCHANT_ID` on every request. No separate auth system — the admin is just a regular merchant with elevated visibility.
 
 ---
 

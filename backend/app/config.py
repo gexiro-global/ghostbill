@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     # App
     app_name: str = "GhostBill"
-    app_version: str = "0.1.0"
+    app_version: str = "1.2.0-beta"
     app_env: str = "development"
     debug: bool = True
     secret_key: str = ""

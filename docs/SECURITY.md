@@ -358,7 +358,7 @@ This checklist is verified before every release:
 
 If you discover a security vulnerability in GhostBill, please report it responsibly:
 
-**Email:** security@ghostbill.io (PGP key available on request)
+**Email:** contact@ghostbill.org (PGP key available on request)
 
 **What to include:**
 - Description of the vulnerability

@@ -89,7 +89,7 @@ Hi AirVPN team,
 We've seen multiple community requests for Monero payment support on your platform. We built GhostBill to make adding XMR as straightforward as possible.
 
 **For your dev team:**
-- REST API with 21 endpoints — create an invoice in 1 HTTP call
+- REST API with 51 endpoints — create an invoice in 1 HTTP call
 - Webhook automation — get notified on payment, confirmation, expiry
 - Unique subaddress per invoice — no address reuse
 - Python and JS verification examples included
@@ -158,7 +158,7 @@ We've been building a non-custodial, Tor-native billing system for Monero mercha
 What it does:
 • View-key only (can't spend your funds)
 • Real-time mempool detection
-• 8 webhook events with HMAC signatures
+• 20 webhook events with HMAC signatures
 • 7 invoice states (partial, overpaid, late handled automatically)
 • .onion API + dashboard
 • Self-hosted (Docker Compose, AGPL-3.0)
@@ -211,13 +211,13 @@ We've been building GhostBill for the past few months and it's now in private be
 - Non-custodial: view key only, spend key never on server
 - Real-time mempool detection (pool: true)
 - 7 invoice states with automatic transitions
-- 8 webhook events with HMAC-SHA256 signatures and 7 retries
+- 20 webhook events with HMAC-SHA256 signatures and 7 retries
 - Tor hidden services for API + dashboard
 - All outgoing connections through Tor
 - Monero signature authentication (passwordless dashboard login)
 - Self-hosted: Docker Compose, 5 containers
-- 21 API endpoints, full CLI tool
-- 60/60 tests passing
+- 51 API endpoints, full CLI tool
+- 111/111 tests passing
 
 **Stack:** FastAPI + PostgreSQL + Redis + monero-wallet-rpc + Next.js
 
@@ -237,7 +237,7 @@ Happy to answer any questions.
 
 Hi [name],
 
-Just following up on my message about GhostBill. We've continued testing and all 60 tests are passing consistently.
+Just following up on my message about GhostBill. We've continued testing and all 111 tests are passing consistently.
 
 If it would be helpful, I'm happy to:
 - Share a live demo (API + dashboard)

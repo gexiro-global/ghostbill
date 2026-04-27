@@ -10,6 +10,7 @@ Covers previously untested areas:
 Requires backend running at 127.0.0.1:8013.
 """
 
+import os
 import random
 import uuid
 from datetime import datetime, timezone
@@ -40,8 +41,8 @@ async def _register_base58_merchant(client) -> dict:
 
 # ── Admin key (matches ADMIN_MERCHANT_ID in .env) ────────────────────────────
 
-ADMIN_KEY = "gb_live_7eb2684f27c2d76fa6733863f9e32602"
-ADMIN_MERCHANT_ID = "0477f1d7-6781-4c25-8f17-28c9f4c8360a"
+ADMIN_KEY = os.getenv("GHOSTBILL_ADMIN_KEY", "")
+ADMIN_MERCHANT_ID = os.getenv("GHOSTBILL_ADMIN_MERCHANT_ID", "")
 
 
 # ── DB helpers for test data ─────────────────────────────────────────────────

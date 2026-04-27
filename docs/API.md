@@ -45,8 +45,8 @@ Authorization: Bearer <api_key>
 
 | Environment | Format | Example |
 |-------------|--------|--------|
-| Live | `gb_live_<hex32>` | `gb_live_5d347e8b575d6d546f7f8af504461ce7` |
-| Test | `gb_test_<hex32>` | `gb_test_a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6` |
+| Live | `gb_live_<hex32>` | `gb_live_aaaa1111bbbb2222cccc3333dddd4444` |
+| Test | `gb_test_<hex32>` | `gb_test_eeee5555ffff6666aaaa7777bbbb8888` |
 
 **Key storage:**
 - Keys are shown **once** at creation — store them securely

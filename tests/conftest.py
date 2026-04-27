@@ -4,6 +4,10 @@ GhostBill — Shared test fixtures and helpers.
 Integration tests against live backend at 127.0.0.1:8013.
 Direct DB access via asyncpg for payment simulation (INSERT).
 
+Required env vars for integration tests:
+    GHOSTBILL_ADMIN_KEY  — API key for the admin merchant
+    GHOSTBILL_TEST_DB    — PostgreSQL DSN (default: localhost:5445)
+
 Usage:
     cd /root/ghostbill && python3 -m pytest tests/ -v
 """
@@ -23,20 +27,20 @@ import httpx
 import pytest
 import pytest_asyncio
 
-# ─── Configuration ───────────────────────────────────────────────────────────
+# ─── Configuration ───────────────────────────────────────────────────────────────
 
 BASE_URL = os.getenv("GHOSTBILL_TEST_URL", "http://127.0.0.1:8013")
 DB_DSN = os.getenv(
     "GHOSTBILL_TEST_DB",
-    "postgresql://ghostbill:f5e1286a040ede55a15f93f02ce2b07e7ea42011748a037b7d4acc6040f1fe3a@127.0.0.1:5445/ghostbill",
+    "postgresql://ghostbill:CHANGE_ME@127.0.0.1:5445/ghostbill",
 )
 
-KNOWN_LIVE_KEY = "gb_live_5d347e8b575d6d546f7f8af504461ce7"
+KNOWN_LIVE_KEY = os.getenv("GHOSTBILL_ADMIN_KEY", "")
 TEST_VIEW_KEY = "a" * 64
 PICONERO = 10**12
 DUST_THRESHOLD_ATOMIC = 100_000_000
 
-# ─── Module-level cache ──────────────────────────────────────────────────────
+# ─── Module-level cache ──────────────────────────────────────────────────────────
 
 _cached_merchant: dict[str, Any] | None = None
 
@@ -56,7 +60,7 @@ async def client():
         pass
 
 
-# ─── DB helper: fresh connection per operation ───────────────────────────────
+# ─── DB helper: fresh connection per operation ───────────────────────────────────
 
 
 async def _get_conn() -> asyncpg.Connection:
@@ -187,7 +191,7 @@ async def get_invoice(
     return resp.json()
 
 
-# ─── Payment Simulation (Direct DB INSERT) ───────────────────────────────────
+# ─── Payment Simulation (Direct DB INSERT) ───────────────────────────────
 
 
 def generate_fake_tx_hash() -> str:

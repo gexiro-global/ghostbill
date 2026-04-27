@@ -1,12 +1,13 @@
 """GhostBill FastAPI application entry point.
 
 Routers: merchants, price, invoices, payments, webhooks, api_keys, auth_signature,
-         customers, subscriptions, analytics, admin, public_invoice
+         customers, subscriptions, analytics, admin, public_invoice, licenses
 Middleware: RateLimiter → SecurityHeaders → TimingJitter
 Lifespan: Redis, background tasks (6), cleanup on shutdown.
 Phase 6C: /health includes detection metrics.
 Phase 7A: /v1/analytics/* endpoints.
 Phase 9: /v1/admin/* endpoints (operator panel).
+License: /v1/admin/licenses + /v1/license/verify.
 """
 
 import asyncio
@@ -24,6 +25,8 @@ from app.api.routes.api_keys import router as api_keys_router
 from app.api.routes.auth_signature import router as auth_signature_router
 from app.api.routes.customers import router as customers_router
 from app.api.routes.invoices import router as invoices_router
+from app.api.routes.licenses import admin_router as license_admin_router
+from app.api.routes.licenses import public_router as license_public_router
 from app.api.routes.merchants import router as merchants_router
 from app.api.routes.payments import router as payments_router
 from app.api.routes.price import router as price_router
@@ -132,9 +135,11 @@ for r in [
     subscriptions_router,
     analytics_router,
     admin_router,
+    license_admin_router,
 ]:
     app.include_router(r, prefix=settings.api_prefix)
 app.include_router(public_api_router, prefix=settings.api_prefix)
+app.include_router(license_public_router, prefix=settings.api_prefix)
 app.include_router(pay_page_router)
 
 

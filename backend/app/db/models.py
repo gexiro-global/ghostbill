@@ -360,6 +360,28 @@ class WebhookDeadLetter(Base):
     __table_args__ = (Index("idx_dlq_merchant", "merchant_id", "resolved"),)
 
 
+# License system: dashboard license keys
+class License(Base):
+    """License key for GhostBill dashboard access. Key stored as SHA-256 hash."""
+
+    __tablename__ = "licenses"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    key_hash: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    key_prefix: Mapped[str] = mapped_column(String(30), nullable=False)
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    tier: Mapped[str] = mapped_column(String(20), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_licenses_key_hash", "key_hash", unique=True),
+        Index("ix_licenses_tier_active", "tier", "active"),
+    )
+
+
 class AuditLog(Base):
     __tablename__ = "audit_log"
 

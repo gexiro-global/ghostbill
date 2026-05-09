@@ -6,6 +6,7 @@ from decimal import Decimal
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     Enum,
     ForeignKey,
@@ -14,6 +15,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
@@ -93,7 +95,11 @@ class Invoice(Base):
     __tablename__ = "invoices"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    merchant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False)
+    merchant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("merchants.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
     amount_atomic: Mapped[int] = mapped_column(BigInteger, nullable=False)
     amount_xmr: Mapped[Decimal] = mapped_column(Numeric(18, 12), nullable=False)
     fiat_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
@@ -120,6 +126,7 @@ class Invoice(Base):
     __table_args__ = (
         Index("ix_invoices_status_expires", "status", "expires_at", postgresql_where=(status == InvoiceStatus.pending)),
         Index("ix_invoices_merchant_created", "merchant_id", "created_at"),
+        CheckConstraint("amount_atomic > 0", name="ck_invoices_amount_atomic_positive"),
     )
 
 
@@ -128,7 +135,7 @@ class InvoiceAddress(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     invoice_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("invoices.id"), unique=True, nullable=False
+        UUID(as_uuid=True), ForeignKey("invoices.id", ondelete="CASCADE"), unique=True, nullable=False
     )
     address: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     address_index: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -137,14 +144,18 @@ class InvoiceAddress(Base):
 
     invoice: Mapped["Invoice"] = relationship(back_populates="address")
 
-    __table_args__ = (Index("ix_invoice_addresses_index", "account_index", "address_index"),)
+    __table_args__ = (Index("ix_invoice_addresses_index", "account_index", "address_index", unique=True),)
 
 
 class Payment(Base):
     __tablename__ = "payments"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    invoice_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("invoices.id"), nullable=False)
+    invoice_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("invoices.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
     tx_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     amount_atomic: Mapped[int] = mapped_column(BigInteger, nullable=False)
     amount_xmr: Mapped[Decimal] = mapped_column(Numeric(18, 12), nullable=False)
@@ -162,6 +173,9 @@ class Payment(Base):
     invoice: Mapped["Invoice"] = relationship(back_populates="payments")
 
     __table_args__ = (
+        UniqueConstraint("invoice_id", "tx_hash", name="uq_payments_invoice_tx"),
+        CheckConstraint("amount_atomic >= 0", name="ck_payments_amount_atomic_nonnegative"),
+        CheckConstraint("confirmations >= 0", name="ck_payments_confirmations_nonnegative"),
         Index("ix_payments_tx_hash", "tx_hash"),
         Index("ix_payments_invoice_status", "invoice_id", "status"),
     )
@@ -171,7 +185,11 @@ class Customer(Base):
     __tablename__ = "customers"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    merchant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False)
+    merchant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("merchants.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
     external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     metadata_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
@@ -187,8 +205,16 @@ class Subscription(Base):
     __tablename__ = "subscriptions"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    merchant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False)
-    customer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("customers.id"), nullable=False)
+    merchant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("merchants.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    customer_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("customers.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
     amount_atomic: Mapped[int] = mapped_column(BigInteger, nullable=False)
     amount_xmr: Mapped[Decimal] = mapped_column(Numeric(18, 12), nullable=False)
     interval_days: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -216,7 +242,7 @@ class Subscription(Base):
     # Phase 8B: pre-payment tracking
     prepaid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     prepay_invoice_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("invoices.id"), nullable=True
+        UUID(as_uuid=True), ForeignKey("invoices.id", ondelete="RESTRICT"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
@@ -229,21 +255,41 @@ class Subscription(Base):
     renewal_events: Mapped[list["SubscriptionRenewalEvent"]] = relationship(back_populates="subscription")
     prepay_invoice: Mapped["Invoice | None"] = relationship(foreign_keys=[prepay_invoice_id])
 
+    __table_args__ = (
+        CheckConstraint("amount_atomic > 0", name="ck_subscriptions_amount_atomic_positive"),
+        CheckConstraint("interval_days > 0", name="ck_subscriptions_interval_days_positive"),
+        CheckConstraint("grace_days_soft >= 0", name="ck_subscriptions_grace_days_soft_nonnegative"),
+        CheckConstraint("grace_days_hard >= 0", name="ck_subscriptions_grace_days_hard_nonnegative"),
+        CheckConstraint("grace_days_hard >= grace_days_soft", name="ck_subscriptions_grace_days_order"),
+        CheckConstraint("trial_days IS NULL OR trial_days > 0", name="ck_subscriptions_trial_days_positive"),
+        Index("ix_subscriptions_customer_id", "customer_id"),
+        Index("ix_subscriptions_prepay_invoice_id", "prepay_invoice_id"),
+    )
+
 
 class SubscriptionPayment(Base):
     __tablename__ = "subscription_payments"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     subscription_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("subscriptions.id"), nullable=False
+        UUID(as_uuid=True), ForeignKey("subscriptions.id", ondelete="RESTRICT"), nullable=False
     )
-    invoice_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("invoices.id"), nullable=False)
+    invoice_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("invoices.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
     period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     subscription: Mapped["Subscription"] = relationship(back_populates="payments")
     invoice: Mapped["Invoice"] = relationship()
+
+    __table_args__ = (
+        CheckConstraint("period_end > period_start", name="ck_subscription_payments_period_order"),
+        Index("ix_subscription_payments_invoice_id", "invoice_id"),
+    )
 
 
 # Phase 6C: Renewal event audit trail
@@ -259,21 +305,32 @@ class SubscriptionRenewalEvent(Base):
         nullable=False,
     )
     result: Mapped[str] = mapped_column(String(30), nullable=False)
-    invoice_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("invoices.id"), nullable=True)
+    invoice_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("invoices.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     details: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     subscription: Mapped["Subscription"] = relationship(back_populates="renewal_events")
 
-    __table_args__ = (Index("idx_renewal_events_sub", "subscription_id", text("created_at DESC")),)
+    __table_args__ = (
+        Index("idx_renewal_events_sub", "subscription_id", text("created_at DESC")),
+        Index("ix_subscription_renewal_events_invoice_id", "invoice_id"),
+    )
 
 
 class WalletShard(Base):
     __tablename__ = "wallet_shards"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    merchant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False)
+    merchant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("merchants.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
     account_index: Mapped[int] = mapped_column(Integer, nullable=False)
     next_address_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -285,7 +342,11 @@ class ApiKey(Base):
     __tablename__ = "api_keys"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    merchant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False)
+    merchant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("merchants.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
     key_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     key_prefix: Mapped[str] = mapped_column(String(20), nullable=False)
     label: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -306,8 +367,16 @@ class WebhookDelivery(Base):
     __tablename__ = "webhook_deliveries"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    merchant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False)
-    invoice_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("invoices.id"), nullable=True)
+    merchant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("merchants.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    invoice_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("invoices.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
     event_type: Mapped[str] = mapped_column(String(64), nullable=False)
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
     url: Mapped[str] = mapped_column(String(2048), nullable=False)
@@ -331,6 +400,8 @@ class WebhookDelivery(Base):
             postgresql_where=(status == WebhookStatus.pending),
         ),
         Index("ix_webhook_deliveries_merchant", "merchant_id"),
+        Index("ix_webhook_deliveries_invoice_id", "invoice_id"),
+        CheckConstraint("attempts >= 0", name="ck_webhook_deliveries_attempts_nonnegative"),
     )
 
 
@@ -341,9 +412,13 @@ class WebhookDeadLetter(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     delivery_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("webhook_deliveries.id"), nullable=False
+        UUID(as_uuid=True), ForeignKey("webhook_deliveries.id", ondelete="RESTRICT"), nullable=False
     )
-    merchant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False)
+    merchant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("merchants.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
     event_type: Mapped[str] = mapped_column(String(50), nullable=False)
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
     original_created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -351,13 +426,21 @@ class WebhookDeadLetter(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    retry_delivery_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("webhook_deliveries.id", ondelete="SET NULL"), nullable=True
+    )
     last_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     resolved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    __table_args__ = (Index("idx_dlq_merchant", "merchant_id", "resolved"),)
+    __table_args__ = (
+        Index("idx_dlq_merchant", "merchant_id", "resolved"),
+        Index("ix_webhook_dead_letters_delivery_id", "delivery_id"),
+        Index("ix_webhook_dead_letters_retry_delivery", "retry_delivery_id"),
+        CheckConstraint("retry_count >= 0", name="ck_webhook_dead_letters_retry_count_nonnegative"),
+    )
 
 
 # License system: dashboard license keys
@@ -386,7 +469,11 @@ class AuditLog(Base):
     __tablename__ = "audit_log"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    merchant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=True)
+    merchant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("merchants.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     action: Mapped[str] = mapped_column(String(128), nullable=False)
     entity_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     entity_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)

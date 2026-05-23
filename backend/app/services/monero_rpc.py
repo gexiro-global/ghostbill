@@ -20,16 +20,11 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# ─── Constants ───────────────────────────────────────────────────────────────
-
 PICONERO: int = 10**12
 DUST_THRESHOLD_ATOMIC: int = 100_000_000  # 0.0001 XMR
 
 MAX_RETRIES: int = 3
 RETRY_BACKOFF_BASE: float = 1.0  # seconds
-
-
-# ─── Conversion helpers ─────────────────────────────────────────────────────
 
 
 def atomic_to_xmr(atomic: int) -> Decimal:
@@ -40,9 +35,6 @@ def atomic_to_xmr(atomic: int) -> Decimal:
 def xmr_to_atomic(xmr: Decimal) -> int:
     """Convert XMR (Decimal) to piconero (atomic units)."""
     return int(xmr * Decimal(str(PICONERO)))
-
-
-# ─── Exceptions ──────────────────────────────────────────────────────────────
 
 
 class MoneroRPCError(Exception):
@@ -59,9 +51,6 @@ class MoneroRPCConnectionError(MoneroRPCError):
     """Connection to wallet-rpc failed after retries."""
 
     pass
-
-
-# ─── RPC Client ──────────────────────────────────────────────────────────────
 
 
 class MoneroRPC:
@@ -154,8 +143,6 @@ class MoneroRPC:
                     await self.close()
 
         raise MoneroRPCConnectionError(f"wallet-rpc {method} failed after {MAX_RETRIES} retries: {last_exception}")
-
-    # ─── Public methods ──────────────────────────────────────────────────
 
     async def get_height(self) -> int:
         """Return current blockchain height seen by wallet-rpc."""
@@ -294,8 +281,6 @@ class MoneroRPC:
             "received": int(result.get("received", 0)),
         }
 
-
-# ─── Singleton ───────────────────────────────────────────────────────────────
 
 _rpc_instance: MoneroRPC | None = None
 

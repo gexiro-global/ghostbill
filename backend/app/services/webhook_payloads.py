@@ -11,15 +11,13 @@ from uuid import UUID
 
 from app.db.models import Invoice, Payment, Subscription
 
-# ─── Constants ────────────────────────────────────────────────────────────────
-
 MAX_ATTEMPTS: int = 7
 DELIVERY_TIMEOUT: float = 10.0
 RETRY_DELAYS: list[int] = [60, 300, 1800, 7200, 43200, 86400]
 JITTER_MIN: float = 0.05
 JITTER_MAX: float = 0.2
 
-# Valid event types (20 total — Phase 8B)
+# Valid event types (22 total — Wave 3A adds invoice.exception_payment and invoice.reverted)
 VALID_EVENTS: list[str] = [
     "payment.detected",
     "payment.confirmed",
@@ -29,6 +27,8 @@ VALID_EVENTS: list[str] = [
     "invoice.partially_paid",
     "invoice.overpaid",
     "invoice.late_paid",
+    "invoice.exception_payment",
+    "invoice.reverted",
     "subscription.created",
     "subscription.renewed",
     "subscription.past_due",
@@ -44,9 +44,6 @@ VALID_EVENTS: list[str] = [
 ]
 
 
-# ─── HMAC Signing ─────────────────────────────────────────────────────────────
-
-
 def sign_payload(payload_bytes: bytes, secret: str) -> str:
     return hmac.new(
         key=secret.encode("utf-8"),
@@ -59,17 +56,11 @@ def verify_signature(payload_bytes: bytes, secret: str, signature: str) -> bool:
     return hmac.compare_digest(sign_payload(payload_bytes, secret), signature)
 
 
-# ─── Retry Schedule ──────────────────────────────────────────────────────────
-
-
 def calculate_next_retry(attempt_count: int) -> datetime | None:
     idx = attempt_count - 1
     if idx >= len(RETRY_DELAYS):
         return None
     return datetime.now(timezone.utc) + timedelta(seconds=RETRY_DELAYS[idx])
-
-
-# ─── Payload Builders ────────────────────────────────────────────────────────
 
 
 def build_payment_payload(payment: Payment, invoice: Invoice) -> dict[str, Any]:
@@ -110,6 +101,28 @@ def build_invoice_payload(invoice: Invoice) -> dict[str, Any]:
             "paid_at": invoice.paid_at.isoformat() if invoice.paid_at else None,
         },
     }
+
+
+def build_invoice_exception_payment_payload(invoice: Invoice, payment: Payment) -> dict[str, Any]:
+    payload = build_invoice_payload(invoice)
+    payload["payment"] = {
+        "id": str(payment.id),
+        "invoice_id": str(payment.invoice_id),
+        "tx_hash": payment.tx_hash,
+        "amount_atomic": payment.amount_atomic,
+        "amount_xmr": str(payment.amount_xmr),
+        "status": payment.status.value,
+        "confirmations": payment.confirmations,
+        "block_height": payment.block_height,
+    }
+    payload["exception"] = "cancelled_invoice_payment"
+    return payload
+
+
+def build_invoice_reverted_payload(invoice: Invoice) -> dict[str, Any]:
+    payload = build_invoice_payload(invoice)
+    payload["reverted"] = True
+    return payload
 
 
 def build_subscription_payload(

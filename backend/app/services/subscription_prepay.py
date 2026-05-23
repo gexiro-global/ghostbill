@@ -11,7 +11,7 @@ import uuid
 from datetime import timedelta
 from decimal import ROUND_DOWN, Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
@@ -198,6 +198,19 @@ async def handle_prepay_payment(
     meta = invoice.metadata_json or {}
     periods = meta.get("periods", 1)
     discount_pct = meta.get("discount_pct", 0)
+
+    existing_stmt = select(func.count(SubscriptionPayment.id)).where(SubscriptionPayment.invoice_id == invoice.id)
+    existing_count = (await db.execute(existing_stmt)).scalar_one()
+    if existing_count > 0:
+        logger.info(
+            "Prepay invoice %s already fulfilled for subscription %s; skipping duplicate fulfillment",
+            invoice.id,
+            sub.id,
+        )
+        if sub.prepay_invoice_id == invoice.id:
+            sub.prepay_invoice_id = None
+            await db.flush()
+        return
 
     # Create N subscription_payment records
     current_start = sub.next_due_at

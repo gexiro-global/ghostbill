@@ -33,20 +33,22 @@ from app.db.models import (
     Payment,
     PaymentStatus,
 )
-from app.services.invoice_service import (
-    TERMINAL_STATUSES,
-    invoice_service,
-)
+from app.services.invoice_service import invoice_service
 from app.services.monero_rpc import DUST_THRESHOLD_ATOMIC, atomic_to_xmr
 
 logger = logging.getLogger(__name__)
 
-# ─── Constants ───────────────────────────────────────────────────────────────
-
 CONFIRMATION_THRESHOLD: int = 10  # blocks required for "confirmed" status
-
-
-# ─── Exceptions ──────────────────────────────────────────────────────────────
+REVERTIBLE_PAID_STATUSES: set[InvoiceStatus] = {
+    InvoiceStatus.paid,
+    InvoiceStatus.overpaid,
+    InvoiceStatus.late_paid,
+}
+REVERTED_TARGET_STATUSES: set[InvoiceStatus] = {
+    InvoiceStatus.pending,
+    InvoiceStatus.partially_paid,
+    InvoiceStatus.expired,
+}
 
 
 class PaymentError(Exception):
@@ -61,13 +63,8 @@ class PaymentNotFoundError(PaymentError):
     pass
 
 
-# ─── Service ─────────────────────────────────────────────────────────────────
-
-
 class PaymentService:
     """Payment business logic — stateless, operates on provided DB session."""
-
-    # ── Lookup ───────────────────────────────────────────────────────────
 
     async def find_invoice_by_subaddress_index(
         self,
@@ -171,8 +168,6 @@ class PaymentService:
 
         return payments, total
 
-    # ── Core: Process Transfer ───────────────────────────────────────────
-
     async def process_transfer(
         self,
         db: AsyncSession,
@@ -222,25 +217,18 @@ class PaymentService:
             # Unknown subaddress — not our invoice (index 0 = primary address, etc.)
             return None
 
-        # 3. Skip invoices in terminal states that don't accept new payments
-        # Exception: expired can transition to late_paid
-        if invoice.status in TERMINAL_STATUSES and invoice.status != InvoiceStatus.cancelled:
-            # Already fully resolved — just update confirmations if payment exists
-            existing = await self.find_payment_by_tx_hash(db, txid)
-            if existing:
-                await self._update_confirmations(db, existing, confirmations, block_height)
-            return existing
-
-        # 4. Check for existing payment (idempotent)
+        # 3. Check for existing payment (idempotent)
         existing = await self.find_payment_by_tx_hash(db, txid)
         if existing:
-            await self._update_confirmations(db, existing, confirmations, block_height)
+            transitioned = await self._update_confirmations(db, existing, confirmations, block_height)
             # Re-evaluate invoice status after confirmation update
-            if existing.status == PaymentStatus.confirmed:
+            if invoice.status != InvoiceStatus.cancelled and (
+                transitioned or existing.status == PaymentStatus.confirmed
+            ):
                 await self._recalculate_invoice_status(db, invoice)
             return existing
 
-        # 5. Create new payment
+        # 4. Create new payment. Cancelled invoices record payment but never settle.
         payment = await self._create_payment(
             db=db,
             invoice=invoice,
@@ -251,12 +239,11 @@ class PaymentService:
             is_mempool=is_mempool,
         )
 
-        # 6. Recalculate invoice status
-        await self._recalculate_invoice_status(db, invoice)
+        # 5. Recalculate invoice status unless cancelled (DEC-01 exception path).
+        if invoice.status != InvoiceStatus.cancelled:
+            await self._recalculate_invoice_status(db, invoice)
 
         return payment
-
-    # ── Create Payment ───────────────────────────────────────────────────
 
     async def _create_payment(
         self,
@@ -291,19 +278,23 @@ class PaymentService:
         )
         db.add(payment)
 
+        audit_details = {
+            "invoice_id": str(invoice.id),
+            "tx_hash": txid,
+            "amount_atomic": amount_atomic,
+            "confirmations": confirmations,
+            "is_mempool": is_mempool,
+        }
+        if invoice.status == InvoiceStatus.cancelled:
+            audit_details["metadata"] = {"exception": "cancelled_invoice_payment"}
+
         # Audit log
         audit = AuditLog(
             merchant_id=invoice.merchant_id,
             action="payment.detected",
             entity_type="payment",
             entity_id=payment.id,
-            details={
-                "invoice_id": str(invoice.id),
-                "tx_hash": txid,
-                "amount_atomic": amount_atomic,
-                "confirmations": confirmations,
-                "is_mempool": is_mempool,
-            },
+            details=audit_details,
         )
         db.add(audit)
 
@@ -318,8 +309,6 @@ class PaymentService:
         )
 
         return payment
-
-    # ── Update Confirmations ─────────────────────────────────────────────
 
     async def _update_confirmations(
         self,
@@ -354,9 +343,12 @@ class PaymentService:
             payment.confirmed_at = datetime.now(timezone.utc)
             changed = True
 
+            invoice_stmt = select(Invoice).where(Invoice.id == payment.invoice_id)
+            invoice = (await db.execute(invoice_stmt)).scalar_one_or_none()
+
             # Audit log
             audit = AuditLog(
-                merchant_id=None,  # Will be set if needed
+                merchant_id=invoice.merchant_id if invoice is not None else None,
                 action="payment.confirmed",
                 entity_type="payment",
                 entity_id=payment.id,
@@ -379,8 +371,6 @@ class PaymentService:
 
         return payment.status == PaymentStatus.confirmed and changed
 
-    # ── Recalculate Invoice Status ───────────────────────────────────────
-
     async def _recalculate_invoice_status(
         self,
         db: AsyncSession,
@@ -389,13 +379,15 @@ class PaymentService:
         """Recalculate invoice status based on cumulative payments.
 
         Logic:
-            - Sum all non-orphaned payments (detected + confirmed)
+            - Sum confirmed payments only
             - Compare cumulative total to invoice.amount_atomic
             - Determine new status:
-                pending/partially_paid + total >= amount → paid
-                pending/partially_paid + total > amount → overpaid
-                pending + total < amount → partially_paid
-                expired + any payment → late_paid
+                confirmed total > amount → overpaid
+                confirmed total >= amount → paid
+                0 < confirmed total < amount → partially_paid
+                confirmed total == 0 → pending
+                expired + confirmed total >= amount → late_paid
+                expired + confirmed total < amount → expired
             - Delegate transition to invoice_service.update_status()
 
         Returns:
@@ -404,21 +396,13 @@ class PaymentService:
         # Refresh invoice to get latest status
         await db.refresh(invoice)
 
-        # Already in a terminal state that we shouldn't change
-        if invoice.status in (
-            InvoiceStatus.paid,
-            InvoiceStatus.overpaid,
-            InvoiceStatus.late_paid,
-            InvoiceStatus.cancelled,
-        ):
+        # Cancelled invoices never settle automatically (DEC-01).
+        if invoice.status == InvoiceStatus.cancelled:
             return invoice.status
 
-        # Sum non-orphaned payments
+        # Sum confirmed payments only. Detected payments are recorded but do not settle invoices.
         cumulative = await self.sum_invoice_payments(db, invoice.id)
         required = invoice.amount_atomic
-
-        if cumulative <= 0:
-            return invoice.status
 
         # Track old status for subscription hook
         old_status = invoice.status
@@ -427,48 +411,47 @@ class PaymentService:
         new_status: InvoiceStatus | None = None
 
         if invoice.status == InvoiceStatus.expired:
-            # Any payment after expiry → late_paid
-            new_status = InvoiceStatus.late_paid
+            if cumulative >= required:
+                new_status = InvoiceStatus.late_paid
+            else:
+                new_status = InvoiceStatus.expired
 
-        elif invoice.status in (InvoiceStatus.pending, InvoiceStatus.partially_paid):
+        elif invoice.status == InvoiceStatus.late_paid:
+            if cumulative >= required:
+                new_status = InvoiceStatus.late_paid
+            else:
+                new_status = InvoiceStatus.expired
+
+        else:
             if cumulative > required:
-                # Overpaid: transition through paid first if needed
-                if invoice.status == InvoiceStatus.pending:
-                    await invoice_service.update_status(
-                        db,
-                        invoice,
-                        InvoiceStatus.partially_paid,
-                        details={"cumulative_atomic": cumulative, "required_atomic": required},
-                    )
                 new_status = InvoiceStatus.overpaid
             elif cumulative >= required:
                 new_status = InvoiceStatus.paid
-            elif cumulative < required:
+            elif cumulative > 0:
                 new_status = InvoiceStatus.partially_paid
+            else:
+                new_status = InvoiceStatus.pending
 
         # Apply transition
-        if new_status is not None and invoice_service.can_transition(invoice.status, new_status):
-            await invoice_service.update_status(
-                db,
-                invoice,
-                new_status,
-                details={
-                    "cumulative_atomic": cumulative,
-                    "required_atomic": required,
-                },
-            )
+        if new_status is not None and invoice.status != new_status:
+            details = {
+                "cumulative_atomic": cumulative,
+                "required_atomic": required,
+            }
+            if invoice_service.can_transition(invoice.status, new_status):
+                await invoice_service.update_status(db, invoice, new_status, details=details)
+            elif invoice.status == InvoiceStatus.pending and new_status == InvoiceStatus.overpaid:
+                await invoice_service.update_status(db, invoice, InvoiceStatus.paid, details=details)
+                await invoice_service.update_status(db, invoice, InvoiceStatus.overpaid, details=details)
 
         # === Phase 5A: Subscription payment hook ===
-        # If invoice transitioned to a paid state, notify subscription service
-        if (
-            invoice.status
-            in (
-                InvoiceStatus.paid,
-                InvoiceStatus.overpaid,
-                InvoiceStatus.late_paid,
-            )
-            and old_status != invoice.status
-        ):
+        # If invoice newly transitioned to a paid state, notify subscription service.
+        paid_statuses = {
+            InvoiceStatus.paid,
+            InvoiceStatus.overpaid,
+            InvoiceStatus.late_paid,
+        }
+        if invoice.status in paid_statuses and old_status not in paid_statuses and old_status != invoice.status:
             try:
                 from app.services.subscription_grace import handle_subscription_payment
 
@@ -483,25 +466,34 @@ class PaymentService:
 
         return invoice.status
 
-    # ── Sum Payments ─────────────────────────────────────────────────────
-
     async def sum_invoice_payments(
         self,
         db: AsyncSession,
         invoice_id: uuid.UUID,
     ) -> int:
-        """Sum amount_atomic of all non-orphaned payments for an invoice.
+        """Sum amount_atomic of confirmed payments for an invoice.
 
-        Only detected + confirmed payments count toward the total.
+        Detected payments are recorded and webhooks fire, but settlement is confirmed-only.
         """
         stmt = select(func.coalesce(func.sum(Payment.amount_atomic), 0)).where(
             Payment.invoice_id == invoice_id,
-            Payment.status.in_([PaymentStatus.detected, PaymentStatus.confirmed]),
+            Payment.status == PaymentStatus.confirmed,
         )
         result = await db.execute(stmt)
         return int(result.scalar_one())
 
-    # ── Reorg Handling ───────────────────────────────────────────────────
+    async def sum_detected_payments(
+        self,
+        db: AsyncSession,
+        invoice_id: uuid.UUID,
+    ) -> int:
+        """Sum amount_atomic of detected payments for observability and tests."""
+        stmt = select(func.coalesce(func.sum(Payment.amount_atomic), 0)).where(
+            Payment.invoice_id == invoice_id,
+            Payment.status == PaymentStatus.detected,
+        )
+        result = await db.execute(stmt)
+        return int(result.scalar_one())
 
     async def handle_reorg(
         self,
@@ -523,9 +515,12 @@ class PaymentService:
         old_status = payment.status
         payment.status = PaymentStatus.orphaned
 
+        invoice_stmt = select(Invoice).where(Invoice.id == payment.invoice_id)
+        invoice = (await db.execute(invoice_stmt)).scalar_one_or_none()
+
         # Audit log
         audit = AuditLog(
-            merchant_id=None,
+            merchant_id=invoice.merchant_id if invoice is not None else None,
             action="payment.orphaned",
             entity_type="payment",
             entity_id=payment.id,
@@ -546,14 +541,8 @@ class PaymentService:
         )
 
         # Recalculate invoice status with remaining non-orphaned payments
-        inv_stmt = select(Invoice).where(Invoice.id == payment.invoice_id).options(selectinload(Invoice.payments))
-        inv_result = await db.execute(inv_stmt)
-        invoice = inv_result.scalar_one_or_none()
-
         if invoice is not None:
             await self._recalculate_invoice_status(db, invoice)
-
-    # ── Batch: Update All Confirmations ──────────────────────────────────
 
     async def get_unconfirmed_payments(
         self,
@@ -566,8 +555,6 @@ class PaymentService:
         stmt = select(Payment).where(Payment.status == PaymentStatus.detected).order_by(Payment.detected_at.asc())
         result = await db.execute(stmt)
         return list(result.scalars().all())
-
-    # ── Webhook Event Determination ──────────────────────────────────────
 
     @staticmethod
     def determine_webhook_events(
@@ -594,6 +581,13 @@ class PaymentService:
         elif payment.status == PaymentStatus.orphaned:
             events.append("payment.orphaned")
 
+        if old_payment_status is None and old_invoice_status == InvoiceStatus.cancelled:
+            events.append("invoice.exception_payment")
+
+        if old_invoice_status in REVERTIBLE_PAID_STATUSES and invoice.status in REVERTED_TARGET_STATUSES:
+            events.append("invoice.reverted")
+            return events
+
         # Invoice status change events
         if invoice.status != old_invoice_status:
             status_event_map: dict[InvoiceStatus, str] = {
@@ -609,7 +603,5 @@ class PaymentService:
 
         return events
 
-
-# ─── Module-level instance ───────────────────────────────────────────────────
 
 payment_service = PaymentService()

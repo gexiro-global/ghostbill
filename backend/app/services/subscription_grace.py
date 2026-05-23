@@ -56,7 +56,22 @@ async def handle_subscription_payment(
             if sub is not None:
                 from app.services.subscription_prepay import handle_prepay_payment
 
-                await handle_prepay_payment(db, invoice, sub)
+                try:
+                    await handle_prepay_payment(db, invoice, sub)
+                except Exception:
+                    if sub.prepay_invoice_id == invoice.id:
+                        sub.prepay_invoice_id = None
+                        await db.flush()
+                    raise
+
+                if sub.prepay_invoice_id == invoice.id and invoice.status in (
+                    InvoiceStatus.paid,
+                    InvoiceStatus.overpaid,
+                    InvoiceStatus.late_paid,
+                ):
+                    sub.prepay_invoice_id = None
+                    await db.flush()
+
                 # Fire subscription.prepaid webhook (fulfillment)
                 try:
                     from app.services.webhook_service import webhook_service

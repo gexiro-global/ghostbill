@@ -3,9 +3,12 @@ Invoice business logic — create, cancel, get, list, state machine.
 
 State machine (7 statuses):
     pending → paid, partially_paid, expired, cancelled
-    partially_paid → paid, overpaid
+    partially_paid → paid, overpaid, pending
     expired → late_paid
-    paid, overpaid, late_paid, cancelled → (terminal, no transitions)
+    paid → overpaid, partially_paid, pending
+    overpaid → paid, partially_paid, pending
+    late_paid → expired
+    cancelled → (terminal, no transitions)
 
 CRITICAL:
     - amount_atomic (BIGINT, piconero) = source of truth
@@ -41,13 +44,9 @@ from app.services.monero_rpc import (
 
 logger = logging.getLogger(__name__)
 
-# ─── Constants ───────────────────────────────────────────────────────────────
-
 EXPIRES_IN_MIN: int = 600  # 10 minutes
 EXPIRES_IN_MAX: int = 2592000  # 30 days (subscription grace periods)
 EXPIRES_IN_DEFAULT: int = 3600  # 1 hour
-
-# ─── State Machine ──────────────────────────────────────────────────────────
 
 VALID_TRANSITIONS: dict[InvoiceStatus, list[InvoiceStatus]] = {
     InvoiceStatus.pending: [
@@ -59,26 +58,31 @@ VALID_TRANSITIONS: dict[InvoiceStatus, list[InvoiceStatus]] = {
     InvoiceStatus.partially_paid: [
         InvoiceStatus.paid,
         InvoiceStatus.overpaid,
+        InvoiceStatus.pending,
     ],
     InvoiceStatus.expired: [
         InvoiceStatus.late_paid,
     ],
-    # Terminal states — no transitions allowed
-    InvoiceStatus.paid: [],
-    InvoiceStatus.overpaid: [],
-    InvoiceStatus.late_paid: [],
+    InvoiceStatus.paid: [
+        InvoiceStatus.overpaid,
+        InvoiceStatus.partially_paid,
+        InvoiceStatus.pending,
+    ],
+    InvoiceStatus.overpaid: [
+        InvoiceStatus.paid,
+        InvoiceStatus.partially_paid,
+        InvoiceStatus.pending,
+    ],
+    InvoiceStatus.late_paid: [
+        InvoiceStatus.expired,
+    ],
+    # Truly terminal state — cancelled invoices never settle automatically.
     InvoiceStatus.cancelled: [],
 }
 
 TERMINAL_STATUSES: set[InvoiceStatus] = {
-    InvoiceStatus.paid,
-    InvoiceStatus.overpaid,
-    InvoiceStatus.late_paid,
     InvoiceStatus.cancelled,
 }
-
-
-# ─── Exceptions ──────────────────────────────────────────────────────────────
 
 
 class InvoiceError(Exception):
@@ -111,13 +115,8 @@ class WalletUnavailableError(InvoiceError):
     pass
 
 
-# ─── Service ─────────────────────────────────────────────────────────────────
-
-
 class InvoiceService:
     """Invoice business logic — stateless, operates on provided DB session."""
-
-    # ── Validation helpers ───────────────────────────────────────────────
 
     @staticmethod
     def _parse_amount_xmr(raw: str | float | Decimal) -> Decimal:
@@ -155,8 +154,6 @@ class InvoiceService:
         """Check if a state transition is valid."""
         return target in VALID_TRANSITIONS.get(current, [])
 
-    # ── Create ───────────────────────────────────────────────────────────
-
     async def create_invoice(
         self,
         db: AsyncSession,
@@ -191,6 +188,8 @@ class InvoiceService:
         amount_xmr = self._parse_amount_xmr(amount_xmr_raw)
         expires_in_sec = self._validate_expires_in(expires_in)
         amount_atomic = xmr_to_atomic(amount_xmr)
+        if amount_atomic <= 0:
+            raise InvoiceValidationError("amount_xmr is below the minimum atomic unit.")
 
         # 2. Calculate fiat amount (snapshot at creation)
         fiat_amount: Decimal | None = None
@@ -272,8 +271,6 @@ class InvoiceService:
 
         return invoice
 
-    # ── Get / List ───────────────────────────────────────────────────────
-
     async def get_invoice(
         self,
         db: AsyncSession,
@@ -333,8 +330,6 @@ class InvoiceService:
 
         return invoices, total
 
-    # ── Cancel ───────────────────────────────────────────────────────────
-
     async def cancel_invoice(
         self,
         db: AsyncSession,
@@ -387,8 +382,6 @@ class InvoiceService:
         logger.info("Invoice cancelled: %s, merchant=%s", invoice_id, merchant_id)
 
         return invoice
-
-    # ── Status Transition (used by detection engine in Phase 1C) ─────────
 
     async def update_status(
         self,
@@ -454,7 +447,5 @@ class InvoiceService:
 
         return invoice
 
-
-# ─── Module-level instance ───────────────────────────────────────────────────
 
 invoice_service = InvoiceService()

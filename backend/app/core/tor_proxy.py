@@ -18,7 +18,9 @@ If GHOSTBILL_TOR_ONLY=true:
 """
 
 import logging
+from ipaddress import ip_address
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -46,8 +48,6 @@ class TorProxy:
     def is_onion_url(self, url: str) -> bool:
         """Check if URL is a .onion address."""
         try:
-            from urllib.parse import urlparse
-
             parsed = urlparse(url)
             return parsed.hostname is not None and parsed.hostname.endswith(".onion")
         except Exception:
@@ -59,8 +59,35 @@ class TorProxy:
         Returns:
             (valid, error_message) — valid=True if URL is allowed.
         """
-        if self._tor_only and not self.is_onion_url(url):
+        try:
+            parsed = urlparse(url)
+        except Exception as exc:
+            return False, f"Invalid webhook URL: {exc}"
+
+        if parsed.scheme not in ("http", "https"):
+            return False, "Webhook URL scheme must be http or https"
+        if parsed.username or parsed.password:
+            return False, "Webhook URL must not include credentials"
+        if not parsed.hostname:
+            return False, "Webhook URL host is required"
+
+        is_onion = parsed.hostname.endswith(".onion")
+        if self._tor_only and not is_onion:
             return False, "TOR_ONLY mode: only .onion webhook URLs accepted"
+        if not is_onion:
+            try:
+                host_ip = ip_address(parsed.hostname)
+            except ValueError:
+                host_ip = None
+            if host_ip is not None and (
+                host_ip.is_private
+                or host_ip.is_loopback
+                or host_ip.is_link_local
+                or host_ip.is_multicast
+                or host_ip.is_reserved
+                or host_ip.is_unspecified
+            ):
+                return False, "Webhook URL must not target private, loopback, or reserved IP addresses"
         return True, None
 
     def _get_client_kwargs(self, timeout: float = 15.0) -> dict[str, Any]:

@@ -32,11 +32,13 @@ from app.services.subscription_renewal import (
     create_renewal_invoice,
     log_renewal_event,
 )
+from app.tasks.detection_helpers import acquire_task_lease
 
 logger = logging.getLogger(__name__)
 
 SWEEP_INTERVAL: int = 3600
 BATCH_SIZE: int = 50
+LEASE_TTL_SECONDS: int = SWEEP_INTERVAL * 2
 
 
 async def subscription_renewer_loop() -> None:
@@ -44,7 +46,8 @@ async def subscription_renewer_loop() -> None:
     logger.info("Subscription renewer started (interval=%ds)", SWEEP_INTERVAL)
     while True:
         try:
-            await run_sweep()
+            if await acquire_task_lease("subscription_renewer", LEASE_TTL_SECONDS):
+                await run_sweep()
         except asyncio.CancelledError:
             logger.info("Subscription renewer cancelled")
             raise

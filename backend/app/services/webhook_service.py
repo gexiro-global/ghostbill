@@ -31,6 +31,7 @@ from app.services.webhook_payloads import (
     JITTER_MAX,
     JITTER_MIN,
     MAX_ATTEMPTS,
+    VALID_EVENTS,
     build_invoice_payload,
     build_payment_payload,
     build_subscription_payload,
@@ -39,6 +40,18 @@ from app.services.webhook_payloads import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class WebhookRetryNotFoundError(Exception):
+    """Delivery retry target does not exist for the merchant."""
+
+
+class WebhookRetryConflictError(Exception):
+    """Delivery retry target is already completed or resolved."""
+
+
+class WebhookRetryInvalidStateError(Exception):
+    """Delivery retry target exists but is not retryable."""
 
 
 class WebhookService:
@@ -53,6 +66,8 @@ class WebhookService:
         invoice_id: uuid.UUID | None = None,
     ) -> WebhookDelivery | None:
         """Create webhook delivery record. Returns None if no URL configured."""
+        if event_type not in VALID_EVENTS:
+            raise ValueError(f"Unknown webhook event type: {event_type}")
         if not merchant.webhook_url or not merchant.webhook_secret:
             return None
         url_valid, url_error = tor_proxy.validate_webhook_url(merchant.webhook_url)
@@ -123,11 +138,16 @@ class WebhookService:
         """Attempt to deliver a single webhook via HTTP POST."""
         await asyncio.sleep(random.uniform(JITTER_MIN, JITTER_MAX))
         payload_bytes = json.dumps(delivery.payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
-        signature = sign_payload(payload_bytes, webhook_secret)
+        timestamp = datetime.now(timezone.utc).isoformat()
+        delivery_id = str(delivery.id)
+        signature = sign_payload(payload_bytes, webhook_secret, timestamp=timestamp, delivery_id=delivery_id)
         headers = {
             "Content-Type": "application/json",
             "X-GhostBill-Signature": signature,
-            "X-GhostBill-Event-ID": str(delivery.id),
+            "X-GhostBill-Signature-Version": "v2",
+            "X-GhostBill-Timestamp": timestamp,
+            "X-GhostBill-Delivery-Id": delivery_id,
+            "X-GhostBill-Event-ID": delivery_id,
             "X-GhostBill-Event-Type": delivery.event_type,
             "User-Agent": "GhostBill-Webhook/1.0",
         }
@@ -160,6 +180,27 @@ class WebhookService:
         )
         return list((await db.execute(stmt)).scalars().all())
 
+    async def claim_pending_deliveries(self, db: AsyncSession, limit: int = 50) -> list[WebhookDelivery]:
+        """Claim pending deliveries with row locks.
+
+        WebhookStatus has no in_progress value in the v1.3 schema. The claim is
+        therefore the PostgreSQL row lock itself: concurrent workers using
+        SKIP LOCKED will not see rows held by this transaction.
+        """
+        now = datetime.now(timezone.utc)
+        stmt = (
+            select(WebhookDelivery)
+            .where(WebhookDelivery.status == WebhookStatus.pending, WebhookDelivery.next_retry_at <= now)
+            .order_by(WebhookDelivery.next_retry_at.asc())
+            .with_for_update(skip_locked=True)
+            .limit(limit)
+        )
+        deliveries = list((await db.execute(stmt)).scalars().all())
+        for delivery in deliveries:
+            delivery.last_attempt_at = now
+        await db.flush()
+        return deliveries
+
     async def process_delivery_result(self, db: AsyncSession, delivery: WebhookDelivery, success: bool) -> None:
         """Process delivery result. On max retries → DLQ instead of just failed."""
         delivery.attempts += 1
@@ -174,18 +215,27 @@ class WebhookService:
             delivery.next_retry_at = calculate_next_retry(delivery.attempts)
         await db.flush()
 
-    async def _move_to_dlq(self, db: AsyncSession, delivery: WebhookDelivery) -> None:
+    async def _move_to_dlq(
+        self, db: AsyncSession, delivery: WebhookDelivery, failure_reason: str | None = None
+    ) -> None:
         """Move failed delivery to Dead Letter Queue."""
         delivery.status = WebhookStatus.dead_lettered
         delivery.next_retry_at = None
+
+        payload = dict(delivery.payload)
+        payload["_dlq_details"] = {
+            "attempt_count": delivery.attempts,
+            "max_attempts": delivery.max_attempts,
+            **({"failure_reason": failure_reason} if failure_reason else {}),
+        }
 
         dlq_entry = WebhookDeadLetter(
             delivery_id=delivery.id,
             merchant_id=delivery.merchant_id,
             event_type=delivery.event_type,
-            payload=delivery.payload,
+            payload=payload,
             original_created_at=delivery.created_at,
-            last_error=delivery.response_body or "Max retries exceeded",
+            last_error=failure_reason or delivery.response_body or "Max retries exceeded",
         )
         db.add(dlq_entry)
         logger.warning(
@@ -200,7 +250,7 @@ class WebhookService:
         db: AsyncSession,
         merchant_id: uuid.UUID,
         delivery_id: uuid.UUID,
-    ) -> WebhookDelivery | None:
+    ) -> WebhookDelivery:
         """Retry a failed or dead_lettered delivery."""
         delivery = (
             await db.execute(
@@ -209,13 +259,59 @@ class WebhookService:
                 )
             )
         ).scalar_one_or_none()
-        if delivery is None or delivery.status not in (WebhookStatus.failed, WebhookStatus.dead_lettered):
-            return None
+        if delivery is None:
+            raise WebhookRetryNotFoundError
+        if delivery.status == WebhookStatus.delivered:
+            raise WebhookRetryConflictError
+        if delivery.status not in (WebhookStatus.failed, WebhookStatus.dead_lettered):
+            raise WebhookRetryInvalidStateError
         delivery.status = WebhookStatus.pending
         delivery.attempts = 0
         delivery.next_retry_at = datetime.now(timezone.utc)
         await db.flush()
         return delivery
+
+    async def retry_dead_letter(
+        self,
+        db: AsyncSession,
+        merchant: Merchant,
+        dlq_entry: WebhookDeadLetter,
+    ) -> WebhookDelivery:
+        if dlq_entry.resolved:
+            raise WebhookRetryConflictError
+        new_delivery = await self.queue_webhook(
+            db=db,
+            merchant=merchant,
+            event_type=dlq_entry.event_type,
+            payload=dlq_entry.payload,
+        )
+        if new_delivery is None:
+            raise WebhookRetryInvalidStateError
+        dlq_entry.retry_count += 1
+        dlq_entry.retry_delivery_id = new_delivery.id
+        dlq_entry.last_retry_at = datetime.now(timezone.utc)
+        return new_delivery
+
+    async def mark_dlq_resolved_for_delivery(self, db: AsyncSession, delivery: WebhookDelivery) -> None:
+        entry = (
+            await db.execute(
+                select(WebhookDeadLetter).where(
+                    WebhookDeadLetter.retry_delivery_id == delivery.id,
+                    WebhookDeadLetter.merchant_id == delivery.merchant_id,
+                    WebhookDeadLetter.resolved.is_(False),
+                )
+            )
+        ).scalar_one_or_none()
+        if entry is None:
+            return
+        entry.resolved = True
+        entry.resolved_at = datetime.now(timezone.utc)
+        payload = dict(entry.payload)
+        details = dict(payload.get("_dlq_details") or {})
+        details["resolved_delivery_id"] = str(delivery.id)
+        payload["_dlq_details"] = details
+        entry.payload = payload
+        await db.flush()
 
 
 webhook_service = WebhookService()

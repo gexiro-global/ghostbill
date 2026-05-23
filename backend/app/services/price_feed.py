@@ -3,7 +3,7 @@ XMR price feed service.
 
 Primary: CoinGecko (free API, no key needed)
 Fallback: Kraken public ticker
-Cache: Redis key "xmr_price", TTL 90s
+Cache: Redis key "xmr_price", TTL 10 minutes
 Stale: price older than 10 minutes
 
 Background task polls every 60s -> Redis.
@@ -26,8 +26,8 @@ logger = logging.getLogger(__name__)
 # ─── Constants ───────────────────────────────────────────────────────────────
 
 REDIS_KEY = "xmr_price"
-CACHE_TTL_SECONDS = 90
 STALE_THRESHOLD_SECONDS = 600  # 10 minutes
+CACHE_TTL_SECONDS = STALE_THRESHOLD_SECONDS
 
 COINGECKO_URL = "https://api.coingecko.com/api/v3/simple/price"
 COINGECKO_PARAMS = {

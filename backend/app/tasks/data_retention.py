@@ -18,6 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import async_session
+from app.tasks.detection_helpers import acquire_task_lease
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ WEBHOOK_RETENTION_DAYS = 30  # Webhook delivery logs
 AUDIT_RETENTION_DAYS = 90  # Audit log entries
 BATCH_SIZE = 500  # Max rows per DELETE
 CYCLE_INTERVAL_SECONDS = 3600  # Run every hour
+LEASE_TTL_SECONDS = CYCLE_INTERVAL_SECONDS * 2
 
 
 async def _cleanup_expired_invoices(db: AsyncSession) -> int:
@@ -38,28 +40,66 @@ async def _cleanup_expired_invoices(db: AsyncSession) -> int:
     """
     cutoff = datetime.now(timezone.utc) - timedelta(hours=INVOICE_RETENTION_HOURS)
 
-    result = await db.execute(
-        text("""
-            DELETE FROM invoices
-            WHERE id IN (
-                SELECT i.id FROM invoices i
-                LEFT JOIN payments p ON p.invoice_id = i.id
-                WHERE i.status IN ('expired', 'cancelled')
-                AND i.updated_at < :cutoff
-                AND p.id IS NULL
-                LIMIT :batch_size
+    target_sql = """
+        SELECT i.id FROM invoices i
+        LEFT JOIN payments p ON p.invoice_id = i.id
+        LEFT JOIN subscription_payments sp ON sp.invoice_id = i.id
+        LEFT JOIN subscription_renewal_events sre ON sre.invoice_id = i.id
+        LEFT JOIN subscriptions s ON s.prepay_invoice_id = i.id
+        WHERE i.status IN ('expired', 'cancelled')
+        AND i.updated_at < :cutoff
+        AND p.id IS NULL
+        AND sp.id IS NULL
+        AND sre.id IS NULL
+        AND s.id IS NULL
+        LIMIT :batch_size
+    """
+
+    addresses = await db.execute(
+        text(
+            """
+            DELETE FROM invoice_addresses
+            WHERE invoice_id IN (
+        """
+            + target_sql
+            + """
             )
-        """),
+        """
+        ),
         {"cutoff": cutoff, "batch_size": BATCH_SIZE},
     )
-    return result.rowcount or 0
+    invoices = await db.execute(
+        text(
+            """
+            DELETE FROM invoices
+            WHERE id IN (
+        """
+            + target_sql
+            + """
+            )
+        """
+        ),
+        {"cutoff": cutoff, "batch_size": BATCH_SIZE},
+    )
+    return (addresses.rowcount or 0) + (invoices.rowcount or 0)
 
 
 async def _cleanup_webhook_logs(db: AsyncSession) -> int:
     """Delete webhook delivery logs older than retention period."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=WEBHOOK_RETENTION_DAYS)
 
-    result = await db.execute(
+    dlq = await db.execute(
+        text("""
+            DELETE FROM webhook_dead_letters
+            WHERE delivery_id IN (
+                SELECT id FROM webhook_deliveries
+                WHERE created_at < :cutoff
+                LIMIT :batch_size
+            )
+        """),
+        {"cutoff": cutoff, "batch_size": BATCH_SIZE},
+    )
+    deliveries = await db.execute(
         text("""
             DELETE FROM webhook_deliveries
             WHERE id IN (
@@ -70,7 +110,7 @@ async def _cleanup_webhook_logs(db: AsyncSession) -> int:
         """),
         {"cutoff": cutoff, "batch_size": BATCH_SIZE},
     )
-    return result.rowcount or 0
+    return (dlq.rowcount or 0) + (deliveries.rowcount or 0)
 
 
 async def _cleanup_audit_logs(db: AsyncSession) -> int:
@@ -133,7 +173,8 @@ async def data_retention_loop() -> None:
 
     while True:
         try:
-            await run_retention_cleanup()
+            if await acquire_task_lease("data_retention", LEASE_TTL_SECONDS):
+                await run_retention_cleanup()
         except asyncio.CancelledError:
             logger.info("Data retention task cancelled")
             raise

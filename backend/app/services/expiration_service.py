@@ -11,22 +11,24 @@ Race condition protection:
     - Detection runs first → marks paid → expiration skips (NOT EXISTS)
     - Expiration runs first → marks expired → detection finds expired → marks late_paid
 
-No webhook dispatched for expired invoices (merchant can poll or check dashboard).
+Expired invoices dispatch invoice.expired webhooks after the atomic status update.
 """
 
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import and_, exists, update
+from sqlalchemy import and_, exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
     AuditLog,
     Invoice,
     InvoiceStatus,
+    Merchant,
     Payment,
     PaymentStatus,
 )
+from app.services.webhook_service import webhook_service
 
 logger = logging.getLogger(__name__)
 
@@ -90,9 +92,23 @@ class ExpirationService:
             )
             db.add(audit)
 
+        expired_ids_raw = [row[0] for row in expired_rows]
+        invoice_stmt = (
+            select(Invoice, Merchant)
+            .join(Merchant, Merchant.id == Invoice.merchant_id)
+            .where(Invoice.id.in_(expired_ids_raw))
+        )
+        for invoice, merchant in (await db.execute(invoice_stmt)).all():
+            await webhook_service.dispatch_events(
+                db=db,
+                events=["invoice.expired"],
+                merchant=merchant,
+                invoice=invoice,
+            )
+
         await db.flush()
 
-        expired_ids = [str(row[0]) for row in expired_rows]
+        expired_ids = [str(invoice_id) for invoice_id in expired_ids_raw]
 
         logger.info(
             "Expired %d pending invoice(s): %s",

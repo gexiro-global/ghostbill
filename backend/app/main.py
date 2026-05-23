@@ -186,7 +186,6 @@ async def trigger_renewal(request: Request, subscription_id: str | None = None):
 
         from app.db.models import Merchant, Subscription, SubscriptionStatus
         from app.db.session import async_session as get_session
-        from app.services.invoice_service import WalletUnavailableError
         from app.services.subscription_exceptions import SkipRenewalError
         from app.services.subscription_renewal import _create_renewal_invoice
 
@@ -212,7 +211,7 @@ async def trigger_renewal(request: Request, subscription_id: str | None = None):
             except SkipRenewalError as exc:
                 logger.info("Trigger renewal skipped: %s: %s", subscription_id, exc)
                 return {"renewed": 0, "skipped": 1, "failed": 0, "reason": "Renewal skipped"}
-            except (WalletUnavailableError, Exception) as exc:
+            except Exception as exc:
                 logger.error("Trigger renewal failed: %s: %s", subscription_id, exc)
                 return {"renewed": 0, "skipped": 0, "failed": 1, "error": "Internal error processing request"}
     else:

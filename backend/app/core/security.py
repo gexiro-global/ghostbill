@@ -21,9 +21,9 @@ logger = logging.getLogger(__name__)
 
 API_KEY_PREFIX_LIVE = "gb_live_"
 API_KEY_PREFIX_TEST = "gb_test_"
-API_KEY_HEX_LENGTH = 32  # 32 hex chars = 16 bytes entropy
+API_KEY_HEX_LENGTH = 64  # 64 hex chars = 32 bytes entropy
 BCRYPT_ROUNDS = 12
-WEBHOOK_SECRET_LENGTH = 32  # 32 hex chars
+WEBHOOK_SECRET_LENGTH = 64  # 64 hex chars
 
 
 # ─── API Key Generation ─────────────────────────────────────────────────────
@@ -32,7 +32,7 @@ WEBHOOK_SECRET_LENGTH = 32  # 32 hex chars
 def generate_api_key(environment: str = "live") -> str:
     """Generate a new API key.
 
-    Format: gb_live_<32hex> or gb_test_<32hex>
+    Format: gb_live_<64hex> or gb_test_<64hex>
     NEVER use ghk_ prefix.
 
     Args:
@@ -45,7 +45,7 @@ def generate_api_key(environment: str = "live") -> str:
         raise ValueError(f"Invalid environment: {environment}. Must be 'live' or 'test'.")
 
     prefix = API_KEY_PREFIX_LIVE if environment == "live" else API_KEY_PREFIX_TEST
-    random_hex = secrets.token_hex(API_KEY_HEX_LENGTH // 2)  # 16 bytes = 32 hex chars
+    random_hex = secrets.token_hex(API_KEY_HEX_LENGTH // 2)  # 32 bytes = 64 hex chars
     return f"{prefix}{random_hex}"
 
 
@@ -92,7 +92,12 @@ def verify_api_key(plain_key: str, hashed_key: str) -> bool:
 # ─── HMAC-SHA256 (Webhooks) ─────────────────────────────────────────────────
 
 
-def hmac_sign(payload: bytes, secret: str) -> str:
+def hmac_sign(
+    payload: bytes,
+    secret: str,
+    timestamp: str | None = None,
+    delivery_id: str | None = None,
+) -> str:
     """Create HMAC-SHA256 signature for webhook payload.
 
     Used in X-GhostBill-Signature header.
@@ -104,6 +109,8 @@ def hmac_sign(payload: bytes, secret: str) -> str:
     Returns:
         Hex-encoded HMAC-SHA256 signature.
     """
+    if timestamp is not None and delivery_id is not None:
+        payload = f"{timestamp}.{delivery_id}.".encode("utf-8") + payload
     return hmac.new(
         key=secret.encode("utf-8"),
         msg=payload,
@@ -111,7 +118,13 @@ def hmac_sign(payload: bytes, secret: str) -> str:
     ).hexdigest()
 
 
-def hmac_verify(payload: bytes, secret: str, signature: str) -> bool:
+def hmac_verify(
+    payload: bytes,
+    secret: str,
+    signature: str,
+    timestamp: str | None = None,
+    delivery_id: str | None = None,
+) -> bool:
     """Verify HMAC-SHA256 signature (constant-time compare).
 
     Args:
@@ -122,8 +135,13 @@ def hmac_verify(payload: bytes, secret: str, signature: str) -> bool:
     Returns:
         True if signature is valid.
     """
-    expected = hmac_sign(payload, secret)
-    return hmac.compare_digest(expected, signature)
+    received = signature.lower()
+    if timestamp is not None and delivery_id is not None:
+        expected = hmac_sign(payload, secret, timestamp, delivery_id).lower()
+        if hmac.compare_digest(expected, received):
+            return True
+    expected = hmac_sign(payload, secret).lower()
+    return hmac.compare_digest(expected, received)
 
 
 # ─── Webhook Secret ─────────────────────────────────────────────────────────
@@ -133,7 +151,7 @@ def generate_webhook_secret() -> str:
     """Generate a random webhook signing secret.
 
     Returns:
-        Hex string (32 chars = 16 bytes entropy).
+        Hex string (64 chars = 32 bytes entropy).
     """
     return secrets.token_hex(WEBHOOK_SECRET_LENGTH // 2)
 

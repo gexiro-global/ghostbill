@@ -252,8 +252,8 @@ class TestWebhookRetry:
         key = fresh_merchant["api_key_live"]
         fake_id = str(uuid.uuid4())
         resp = await client.post(f"/v1/webhooks/{fake_id}/retry", headers=auth_headers(key))
-        assert resp.status_code == 400
-        print("\u2713 Webhook retry not found \u2192 400")
+        assert resp.status_code == 404
+        print("\u2713 Webhook retry not found \u2192 404")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -346,9 +346,9 @@ class TestDLQRetry:
                 f"/v1/webhooks/dead-letters/{dlq_id}/retry",
                 headers=auth_headers(key),
             )
-            assert resp.status_code == 400
+            assert resp.status_code == 409
             assert "resolved" in resp.json()["detail"].lower()
-            print("\u2713 DLQ retry already resolved \u2192 400")
+            print("\u2713 DLQ retry already resolved \u2192 409")
         finally:
             await cleanup_test_webhook_data(mid)
 

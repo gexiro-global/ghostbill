@@ -21,6 +21,7 @@ from sqlalchemy import select
 from app.db.models import Merchant
 from app.db.session import async_session
 from app.services.webhook_service import webhook_service
+from app.tasks.detection_helpers import acquire_task_lease
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 WORKER_INTERVAL: int = 10  # seconds between cycles
 BATCH_SIZE: int = 50  # max deliveries per cycle
+LEASE_TTL_SECONDS: int = WORKER_INTERVAL * 2
 
 
 # ─── Background Task ────────────────────────────────────────────────────────
@@ -47,11 +49,15 @@ async def webhook_worker_loop() -> None:
 
     while True:
         try:
+            if not await acquire_task_lease("webhook_worker", LEASE_TTL_SECONDS):
+                await asyncio.sleep(WORKER_INTERVAL)
+                continue
+
             processed = 0
 
             async with async_session() as db:
-                # Fetch pending deliveries
-                deliveries = await webhook_service.get_pending_deliveries(db, limit=BATCH_SIZE)
+                # Claim pending deliveries with SELECT FOR UPDATE SKIP LOCKED.
+                deliveries = await webhook_service.claim_pending_deliveries(db, limit=BATCH_SIZE)
 
                 if not deliveries:
                     await asyncio.sleep(WORKER_INTERVAL)
@@ -65,16 +71,13 @@ async def webhook_worker_loop() -> None:
                         merchant = merchant_result.scalar_one_or_none()
 
                         if merchant is None or not merchant.webhook_secret:
+                            reason = "merchant_not_found" if merchant is None else "webhook_secret_missing"
                             logger.warning(
-                                "Webhook delivery %s: merchant %s not found or no secret, marking failed",
+                                "Webhook delivery %s: %s, moving to DLQ",
                                 delivery.id,
-                                delivery.merchant_id,
+                                reason,
                             )
-                            from app.db.models import WebhookStatus
-
-                            delivery.status = WebhookStatus.failed
-                            delivery.next_retry_at = None
-                            await db.flush()
+                            await webhook_service._move_to_dlq(db, delivery, failure_reason=reason)
                             continue
 
                         # Attempt delivery
@@ -82,6 +85,8 @@ async def webhook_worker_loop() -> None:
 
                         # Process result (update status, schedule retry if needed)
                         await webhook_service.process_delivery_result(db, delivery, success)
+                        if success:
+                            await webhook_service.mark_dlq_resolved_for_delivery(db, delivery)
 
                         processed += 1
 

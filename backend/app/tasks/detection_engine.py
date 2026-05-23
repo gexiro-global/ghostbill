@@ -37,6 +37,7 @@ from app.tasks.detection_helpers import (
     DEEP_SCAN_INTERVAL,
     REORG_BUFFER,
     SCAN_INTERVAL,
+    acquire_task_lease,
     get_last_scanned_height,
     load_merchant,
     save_health_metrics,
@@ -155,6 +156,10 @@ async def detection_engine_loop() -> None:
 
     while True:
         try:
+            if not await acquire_task_lease("detection_engine", SCAN_INTERVAL * 2):
+                await asyncio.sleep(SCAN_INTERVAL)
+                continue
+
             rpc = get_monero_rpc()
 
             try:
@@ -165,6 +170,9 @@ async def detection_engine_loop() -> None:
                 continue
 
             last_scanned = await get_last_scanned_height()
+
+            checkpoint_to_save: int | None = None
+            scanned_height_for_health = last_scanned
 
             async with async_session() as db:
                 # ── Regular scan ───────────────────────────────────────
@@ -187,7 +195,7 @@ async def detection_engine_loop() -> None:
                             REORG_BUFFER,
                         )
 
-                    await save_last_scanned_height(current_height)
+                    checkpoint_to_save = current_height
 
                 # ── Deep scan (every 1h) ─────────────────────────────
                 now = datetime.now(timezone.utc)
@@ -219,8 +227,12 @@ async def detection_engine_loop() -> None:
 
                 await db.commit()
 
-            # Phase 6C: save health metrics after successful cycle
-            await save_health_metrics(current_height, last_scanned)
+            if checkpoint_to_save is not None:
+                await save_last_scanned_height(checkpoint_to_save)
+                scanned_height_for_health = checkpoint_to_save
+
+            # Phase 6C/Wave 4: save health metrics after successful commit/checkpoint.
+            await save_health_metrics(current_height, scanned_height_for_health)
 
         except asyncio.CancelledError:
             logger.info("Detection engine shutting down")

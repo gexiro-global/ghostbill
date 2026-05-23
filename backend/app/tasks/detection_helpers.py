@@ -4,6 +4,7 @@ Extracted from detection_engine.py in Phase 6C for maintainability.
 """
 
 import logging
+from typing import Any
 
 import redis.asyncio as aioredis
 from sqlalchemy import select
@@ -25,6 +26,7 @@ REORG_BUFFER: int = 10  # Phase 6C: scan N blocks back for safety
 REDIS_HEIGHT_KEY: str = "ghostbill:last_scanned_height"
 REDIS_LAST_SWEEP_KEY: str = "ghostbill:detection:last_sweep_at"
 REDIS_BLOCKS_BEHIND_KEY: str = "ghostbill:detection:blocks_behind"
+LEASE_KEY_PREFIX: str = "ghostbill:lease:"
 
 
 # ── Redis Helpers ────────────────────────────────────────────────────────────
@@ -73,6 +75,29 @@ async def save_health_metrics(current_height: int, last_scanned: int) -> None:
         await r.aclose()
     except Exception:
         logger.warning("Failed to save detection health metrics")
+
+
+async def acquire_task_lease(task_name: str, ttl_seconds: int, redis_client: Any | None = None) -> bool:
+    """Acquire a short Redis lease for one background task iteration.
+
+    Uses SET NX EX so only one process performs a given task iteration. The
+    process memory boundary is already trusted for GhostBill secrets; Redis is
+    the coordination boundary for multi-worker background tasks.
+    """
+    r = redis_client or await _get_redis()
+    close_client = redis_client is None
+    try:
+        acquired = await r.set(f"{LEASE_KEY_PREFIX}{task_name}", "1", ex=ttl_seconds, nx=True)
+        return bool(acquired)
+    except Exception:
+        logger.warning("Failed to acquire Redis lease for %s", task_name)
+        return False
+    finally:
+        if close_client:
+            try:
+                await r.aclose()
+            except Exception:
+                pass
 
 
 async def get_health_metrics() -> dict:

@@ -44,16 +44,36 @@ VALID_EVENTS: list[str] = [
 ]
 
 
-def sign_payload(payload_bytes: bytes, secret: str) -> str:
+def sign_payload(
+    payload_bytes: bytes,
+    secret: str,
+    timestamp: str | None = None,
+    delivery_id: str | None = None,
+) -> str:
+    if timestamp is not None and delivery_id is not None:
+        msg = f"{timestamp}.{delivery_id}.".encode("utf-8") + payload_bytes
+    else:
+        msg = payload_bytes
     return hmac.new(
         key=secret.encode("utf-8"),
-        msg=payload_bytes,
+        msg=msg,
         digestmod=hashlib.sha256,
     ).hexdigest()
 
 
-def verify_signature(payload_bytes: bytes, secret: str, signature: str) -> bool:
-    return hmac.compare_digest(sign_payload(payload_bytes, secret), signature)
+def verify_signature(
+    payload_bytes: bytes,
+    secret: str,
+    signature: str,
+    timestamp: str | None = None,
+    delivery_id: str | None = None,
+) -> bool:
+    normalized = signature.lower()
+    if timestamp is not None and delivery_id is not None:
+        expected = sign_payload(payload_bytes, secret, timestamp, delivery_id).lower()
+        if hmac.compare_digest(expected, normalized):
+            return True
+    return hmac.compare_digest(sign_payload(payload_bytes, secret).lower(), normalized)
 
 
 def calculate_next_retry(attempt_count: int) -> datetime | None:

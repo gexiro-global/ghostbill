@@ -10,10 +10,12 @@ import logging
 
 from app.db.session import async_session
 from app.services.expiration_service import expiration_service
+from app.tasks.detection_helpers import acquire_task_lease
 
 logger = logging.getLogger(__name__)
 
 EXPIRATION_INTERVAL: int = 60  # seconds
+LEASE_TTL_SECONDS: int = EXPIRATION_INTERVAL * 2
 
 
 async def run_invoice_expirer() -> None:
@@ -31,6 +33,10 @@ async def run_invoice_expirer() -> None:
 
     while True:
         try:
+            if not await acquire_task_lease("invoice_expirer", LEASE_TTL_SECONDS):
+                await asyncio.sleep(EXPIRATION_INTERVAL)
+                continue
+
             async with async_session() as db:
                 async with db.begin():
                     expired_ids = await expiration_service.expire_pending_invoices(db)

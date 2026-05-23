@@ -11,10 +11,12 @@ import logging
 from redis.asyncio import Redis
 
 from app.services.price_feed import PriceFeedService
+from app.tasks.detection_helpers import acquire_task_lease
 
 logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_SECONDS = 60
+LEASE_TTL_SECONDS = POLL_INTERVAL_SECONDS * 2
 
 
 async def price_updater_loop(redis: Redis) -> None:
@@ -29,6 +31,10 @@ async def price_updater_loop(redis: Redis) -> None:
 
     while True:
         try:
+            if not await acquire_task_lease("price_updater", LEASE_TTL_SECONDS, redis_client=redis):
+                await asyncio.sleep(POLL_INTERVAL_SECONDS)
+                continue
+
             result = await service.update_price()
             source = result.get("source", "unknown")
             usd = result.get("usd")

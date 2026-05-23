@@ -51,6 +51,7 @@ async def paginate_cursor(
     starting_after: uuid.UUID | None = None,
     ending_before: uuid.UUID | None = None,
     order_column=None,
+    tenant_filter=None,
 ) -> dict[str, Any]:
     """Execute cursor-paginated query.
 
@@ -62,6 +63,7 @@ async def paginate_cursor(
         starting_after: Return results AFTER this ID (forward).
         ending_before: Return results BEFORE this ID (backward).
         order_column: Column for primary sort (default: model.created_at).
+        tenant_filter: Optional SQLAlchemy filter applied to cursor lookup.
 
     Returns:
         {"data": [model_instances], "has_more": bool}
@@ -71,18 +73,25 @@ async def paginate_cursor(
         order_column = model.created_at
 
     query = base_query
+    cursor_query_filter = tenant_filter
 
     if starting_after is not None:
-        cursor_row = (await db.execute(select(order_column, model.id).where(model.id == starting_after))).first()
+        cursor_query = select(order_column, model.id).where(model.id == starting_after)
+        if cursor_query_filter is not None:
+            cursor_query = cursor_query.where(cursor_query_filter)
+        cursor_row = (await db.execute(cursor_query)).first()
         if cursor_row is None:
-            raise HTTPException(status_code=400, detail="Invalid cursor: starting_after not found.")
+            raise HTTPException(status_code=400, detail="Invalid cursor.")
         cursor_ts, cursor_id = cursor_row
         query = query.where(tuple_(order_column, model.id) < tuple_(cursor_ts, cursor_id))
 
     elif ending_before is not None:
-        cursor_row = (await db.execute(select(order_column, model.id).where(model.id == ending_before))).first()
+        cursor_query = select(order_column, model.id).where(model.id == ending_before)
+        if cursor_query_filter is not None:
+            cursor_query = cursor_query.where(cursor_query_filter)
+        cursor_row = (await db.execute(cursor_query)).first()
         if cursor_row is None:
-            raise HTTPException(status_code=400, detail="Invalid cursor: ending_before not found.")
+            raise HTTPException(status_code=400, detail="Invalid cursor.")
         cursor_ts, cursor_id = cursor_row
         query = query.where(tuple_(order_column, model.id) > tuple_(cursor_ts, cursor_id))
         # Backward: sort ASC, then reverse

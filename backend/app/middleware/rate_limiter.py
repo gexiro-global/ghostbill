@@ -33,9 +33,12 @@ EXEMPT_PATHS = {"/health", "/docs", "/openapi.json"}
 # IPs exempt from rate limiting (localhost + Docker bridge gateways)
 EXEMPT_IPS = {"127.0.0.1", "::1", "172.17.0.1", "172.23.0.1"}
 
+# Proxies allowed to supply X-Forwarded-For. Direct clients are never trusted.
+TRUSTED_PROXIES = {"127.0.0.1", "::1", "172.17.0.1", "172.18.0.1", "172.19.0.1", "172.23.0.1"}
+
 # Public API paths — higher rate limit, no auth required
 PUBLIC_API_PATTERN = re.compile(
-    r"^/v1/invoices/[0-9a-f\-]{36}/public$|^/pay/[0-9a-f\-]{36}$",
+    r"^/v1/invoices/[0-9a-f\-]{36}/public$|^/v1/invoices/[0-9a-f\-]{36}/events$|^/pay/[0-9a-f\-]{36}$",
     re.IGNORECASE,
 )
 
@@ -59,7 +62,7 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
 
     def _get_merchant_limiter(self, redis) -> MerchantRateLimiter:
         if self._merchant_limiter is None:
-            self._merchant_limiter = MerchantRateLimiter(redis)
+            self._merchant_limiter = MerchantRateLimiter(redis, fail_open=False)
         return self._merchant_limiter
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
@@ -95,39 +98,31 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
 
         # ── Layer 2: Merchant-based rate limit (Phase 6C) ──────────
         response_headers = ip_result.headers()
-        merchant_id = getattr(request.state, "merchant_id", None) if hasattr(request, "state") else None
-
-        # If Bearer auth present, check merchant limit after route handler
-        # resolves merchant_id. We do pre-check here if we can extract from header.
+        # If Bearer auth present, check merchant limit before route execution.
         auth_header = request.headers.get("authorization", "")
         if auth_header.startswith("Bearer gb_"):
-            # Run route handler first (merchant_id set by auth dependency)
+            api_key = auth_header[7:]
+            merchant_identifier = get_identifier_for_key(api_key)
+            merchant_limiter = self._get_merchant_limiter(redis)
+            m_tier = "write" if request.method in WRITE_METHODS else "read"
+            m_result = await merchant_limiter.check(merchant_identifier, m_tier)
+
+            if not m_result.allowed:
+                return JSONResponse(
+                    status_code=429,
+                    content={
+                        "error": "merchant_rate_limit_exceeded",
+                        "message": (
+                            f"Merchant rate limit exceeded. Retry after {int(m_result.retry_after or 60)} seconds."
+                        ),
+                        "retry_after": int(m_result.retry_after or 60),
+                    },
+                    headers=m_result.headers(),
+                )
+
             response = await call_next(request)
-
-            # Check merchant limit post-auth
-            merchant_id = getattr(request.state, "merchant_id", None) if hasattr(request, "state") else None
-            if merchant_id:
-                merchant_limiter = self._get_merchant_limiter(redis)
-                m_tier = "write" if request.method in WRITE_METHODS else "read"
-                m_result = await merchant_limiter.check(str(merchant_id), m_tier)
-
-                # Override response headers with merchant limits
-                for h, v in m_result.headers().items():
-                    response.headers[h] = v
-
-                if not m_result.allowed:
-                    return JSONResponse(
-                        status_code=429,
-                        content={
-                            "error": "merchant_rate_limit_exceeded",
-                            "message": (
-                                f"Merchant rate limit exceeded. Retry after {int(m_result.retry_after or 60)} seconds."
-                            ),
-                            "retry_after": int(m_result.retry_after or 60),
-                        },
-                        headers=m_result.headers(),
-                    )
-
+            for h, v in m_result.headers().items():
+                response.headers[h] = v
             # Add IP headers too
             for header, value in ip_result.headers().items():
                 if header not in response.headers:
@@ -164,10 +159,9 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
         return f"ip:{client_ip}", RateTier.UNAUTHENTICATED
 
     def _get_client_ip(self, request: Request) -> str:
-        """Extract client IP from request."""
+        """Extract client IP from trusted proxy headers or the direct peer."""
+        peer_ip = request.client.host if request.client else "unknown"
         forwarded = request.headers.get("x-forwarded-for")
-        if forwarded:
+        if forwarded and peer_ip in TRUSTED_PROXIES:
             return forwarded.split(",")[0].strip()
-        if request.client:
-            return request.client.host
-        return "unknown"
+        return peer_ip

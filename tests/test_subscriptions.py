@@ -45,12 +45,16 @@ async def _create_subscription(client, api_key, customer_id, amount="0.5", inter
 
 
 async def _trigger_renewal(subscription_id: str | None = None):
-    """Call trigger-renewal endpoint."""
+    """Call trigger-renewal endpoint with internal bearer auth."""
+    import os
+
+    internal_secret = os.environ.get("GHOSTBILL_INTERNAL_SECRET", "")
+    headers = {"Authorization": f"Bearer {internal_secret}"} if internal_secret else {}
     params = {}
     if subscription_id:
         params["subscription_id"] = subscription_id
     async with httpx.AsyncClient(base_url=BASE_URL, timeout=120.0) as c:
-        resp = await c.post("/v1/internal/trigger-renewal", params=params)
+        resp = await c.post("/v1/internal/trigger-renewal", params=params, headers=headers)
     return resp
 
 

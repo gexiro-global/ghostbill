@@ -7,10 +7,11 @@ PATCH /v1/customers/{id}    — Update customer (auth required)
 """
 
 import logging
+import re
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,6 +30,35 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/customers", tags=["customers"])
 
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+MAX_METADATA_KEYS = 20
+MAX_METADATA_KEY_LENGTH = 64
+MAX_METADATA_STRING_LENGTH = 1024
+MAX_METADATA_DEPTH = 2
+
+
+def validate_email_value(value: str | None) -> str | None:
+    if value is not None and not EMAIL_PATTERN.match(value):
+        raise ValueError("Invalid email format.")
+    return value
+
+
+def validate_metadata_value(value, depth: int = 0) -> None:
+    if depth > MAX_METADATA_DEPTH:
+        raise ValueError("metadata nesting depth exceeds 2.")
+    if isinstance(value, dict):
+        if len(value) > MAX_METADATA_KEYS:
+            raise ValueError("metadata may contain at most 20 keys.")
+        for key, nested in value.items():
+            if not isinstance(key, str) or len(key) > MAX_METADATA_KEY_LENGTH:
+                raise ValueError("metadata keys must be strings up to 64 characters.")
+            validate_metadata_value(nested, depth + 1)
+    elif isinstance(value, list):
+        for nested in value:
+            validate_metadata_value(nested, depth + 1)
+    elif isinstance(value, str) and len(value) > MAX_METADATA_STRING_LENGTH:
+        raise ValueError("metadata string values must be at most 1024 characters.")
+
 
 # ─── Schemas ──────────────────────────────────────────────────────────
 
@@ -38,11 +68,35 @@ class CustomerCreateRequest(BaseModel):
     email: str | None = Field(default=None, max_length=255)
     metadata: dict | None = Field(default=None)
 
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str | None) -> str | None:
+        return validate_email_value(value)
+
+    @field_validator("metadata")
+    @classmethod
+    def validate_metadata(cls, value: dict | None) -> dict | None:
+        if value is not None:
+            validate_metadata_value(value)
+        return value
+
 
 class CustomerUpdateRequest(BaseModel):
     external_id: str | None = Field(default=None, max_length=255)
     email: str | None = Field(default=None, max_length=255)
     metadata: dict | None = Field(default=None)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str | None) -> str | None:
+        return validate_email_value(value)
+
+    @field_validator("metadata")
+    @classmethod
+    def validate_metadata(cls, value: dict | None) -> dict | None:
+        if value is not None:
+            validate_metadata_value(value)
+        return value
 
 
 class CustomerResponse(BaseModel):
@@ -119,6 +173,7 @@ async def list_customers(
         limit=limit,
         starting_after=starting_after,
         ending_before=ending_before,
+        tenant_filter=Customer.merchant_id == merchant.id,
     )
 
     return CustomerCursorResponse(

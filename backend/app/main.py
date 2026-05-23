@@ -11,6 +11,7 @@ License: /v1/admin/licenses + /v1/license/verify.
 """
 
 import asyncio
+import hmac
 import logging
 import uuid
 from contextlib import asynccontextmanager
@@ -60,6 +61,21 @@ logging.basicConfig(
 setup_log_redaction()
 
 _INTERNAL_IPS = {"127.0.0.1", "::1", "172.17.0.1", "172.23.0.1"}
+
+
+def _require_internal_authorization(request: Request) -> None:
+    """Require trusted internal peer and configured bearer secret."""
+    client_host = request.client.host if request.client else ""
+    if client_host not in _INTERNAL_IPS:
+        raise HTTPException(status_code=403, detail="Internal only.")
+
+    if settings.app_env.lower() == "production" and not settings.internal_secret:
+        raise HTTPException(status_code=503, detail="Internal endpoint not configured.")
+
+    authorization = request.headers.get("Authorization", "")
+    expected = f"Bearer {settings.internal_secret}"
+    if not settings.internal_secret or not hmac.compare_digest(authorization, expected):
+        raise HTTPException(status_code=401, detail="Invalid internal authorization.")
 
 
 @asynccontextmanager
@@ -119,9 +135,9 @@ if _cors_origins:
         allow_headers=["*"],
     )
 
-app.add_middleware(TimingJitterMiddleware)
-app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RateLimiterMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(TimingJitterMiddleware)
 
 for r in [
     merchants_router,
@@ -163,9 +179,7 @@ async def health_check():
 @app.post("/v1/internal/trigger-renewal")
 async def trigger_renewal(request: Request, subscription_id: str | None = None):
     """Trigger renewal. Internal only."""
-    client_host = request.client.host if request.client else ""
-    if client_host not in _INTERNAL_IPS:
-        raise HTTPException(status_code=403, detail="Internal only.")
+    _require_internal_authorization(request)
 
     if subscription_id:
         from sqlalchemy import select
@@ -196,10 +210,11 @@ async def trigger_renewal(request: Request, subscription_id: str | None = None):
                 await db.commit()
                 return {"renewed": 1, "skipped": 0, "failed": 0}
             except SkipRenewalError as exc:
-                return {"renewed": 0, "skipped": 1, "failed": 0, "reason": str(exc)}
+                logger.info("Trigger renewal skipped: %s: %s", subscription_id, exc)
+                return {"renewed": 0, "skipped": 1, "failed": 0, "reason": "Renewal skipped"}
             except (WalletUnavailableError, Exception) as exc:
                 logger.error("Trigger renewal failed: %s: %s", subscription_id, exc)
-                return {"renewed": 0, "skipped": 0, "failed": 1, "error": str(exc)}
+                return {"renewed": 0, "skipped": 0, "failed": 1, "error": "Internal error processing request"}
     else:
         from app.tasks.subscription_renewer import run_sweep
 

@@ -209,6 +209,7 @@ async def list_subscriptions(
         limit=limit,
         starting_after=starting_after,
         ending_before=ending_before,
+        tenant_filter=Subscription.merchant_id == merchant.id,
     )
 
     return SubscriptionCursorResponse(
@@ -262,6 +263,7 @@ async def get_renewal_log(
         limit=limit,
         starting_after=starting_after,
         ending_before=ending_before,
+        tenant_filter=SubscriptionRenewalEvent.subscription_id == subscription_id,
     )
 
     data = [

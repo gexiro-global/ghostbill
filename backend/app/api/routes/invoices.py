@@ -199,6 +199,7 @@ async def list_invoices(
         limit=limit,
         starting_after=starting_after,
         ending_before=ending_before,
+        tenant_filter=Invoice.merchant_id == merchant.id,
     )
 
     # Load address for each invoice

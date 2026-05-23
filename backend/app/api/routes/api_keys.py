@@ -69,6 +69,7 @@ async def list_api_keys(
         limit=limit,
         starting_after=starting_after,
         ending_before=ending_before,
+        tenant_filter=ApiKey.merchant_id == merchant.id,
     )
 
     return ApiKeyCursorResponse(

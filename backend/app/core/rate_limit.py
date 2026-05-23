@@ -78,8 +78,9 @@ class RateLimitResult:
 class SlidingWindowRateLimiter:
     """Redis-based sliding window rate limiter."""
 
-    def __init__(self, redis: Redis):
+    def __init__(self, redis: Redis, fail_open: bool = True):
         self._redis = redis
+        self._fail_open = fail_open
 
     async def check(
         self,
@@ -129,12 +130,14 @@ class SlidingWindowRateLimiter:
             )
 
         except Exception as e:
-            logger.error(f"Rate limiter Redis error: {e}")
+            marker = "RATE_LIMIT_REDIS_FAIL_OPEN" if self._fail_open else "RATE_LIMIT_REDIS_FAIL_CLOSED"
+            logger.error("%s Rate limiter Redis error: %s", marker, e)
             return RateLimitResult(
-                allowed=True,
+                allowed=self._fail_open,
                 limit=limit,
-                remaining=limit,
+                remaining=limit if self._fail_open else 0,
                 reset_after=window,
+                retry_after=None if self._fail_open else float(window),
             )
 
     async def get_usage(self, identifier: str, tier: RateTier) -> int:
@@ -170,8 +173,9 @@ class MerchantRateLimiter:
     Simpler than sorted set — sufficient for merchant-level limits.
     """
 
-    def __init__(self, redis: Redis):
+    def __init__(self, redis: Redis, fail_open: bool = True):
         self._redis = redis
+        self._fail_open = fail_open
 
     async def check(
         self,
@@ -212,12 +216,14 @@ class MerchantRateLimiter:
             )
 
         except Exception as e:
-            logger.error(f"Merchant rate limiter Redis error: {e}")
+            marker = "RATE_LIMIT_REDIS_FAIL_OPEN" if self._fail_open else "RATE_LIMIT_REDIS_FAIL_CLOSED"
+            logger.error("%s Merchant rate limiter Redis error: %s", marker, e)
             return RateLimitResult(
-                allowed=True,
+                allowed=self._fail_open,
                 limit=limit,
-                remaining=limit,
+                remaining=limit if self._fail_open else 0,
                 reset_after=60.0,
+                retry_after=None if self._fail_open else 60.0,
             )
 
 

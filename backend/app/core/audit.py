@@ -101,7 +101,7 @@ def _sanitize_metadata(metadata: dict[str, Any] | None) -> dict[str, Any] | None
 
 
 async def audit_log(
-    db: AsyncSession,
+    db: AsyncSession | None,
     event: AuditEvent | str,
     merchant_id: UUID | str | None = None,
     metadata: dict[str, Any] | None = None,
@@ -115,7 +115,7 @@ async def audit_log(
     On failure, logs error but does NOT raise — audit must never break API flow.
 
     Args:
-        db: Database session.
+        db: Ignored caller session. Audit writes use an independent session.
         event: Audit event type (from AuditEvent enum or string).
         merchant_id: Associated merchant UUID (nullable for system events).
         metadata: Additional event data (will be sanitized), stored in 'details' column.
@@ -130,31 +130,37 @@ async def audit_log(
     entity_uuid = str(entity_id) if entity_id else None
     entity_type = _EVENT_ENTITY_MAP.get(event_str)
     row_id = str(uuid_mod.uuid4())
+    del db
+
+    from app.db.session import async_session
 
     try:
-        await db.execute(
-            text("""
-                INSERT INTO audit_log (id, merchant_id, action, entity_type, entity_id, details, ip_address, created_at)
-                VALUES (:id::uuid, :merchant_id::uuid, :action, :entity_type,
-                    :entity_id::uuid, :details::jsonb, NULL, :created_at)
-            """),
-            {
-                "id": row_id,
-                "merchant_id": merchant_uuid,
-                "action": event_str,
-                "entity_type": entity_type,
-                "entity_id": entity_uuid,
-                "details": details_json,
-                "created_at": datetime.now(timezone.utc),
-            },
-        )
-        await db.commit()
+        async with async_session() as audit_db:
+            try:
+                await audit_db.execute(
+                    text("""
+                        INSERT INTO audit_log (
+                            id, merchant_id, action, entity_type, entity_id, details, ip_address, created_at
+                        )
+                        VALUES (:id::uuid, :merchant_id::uuid, :action, :entity_type,
+                            :entity_id::uuid, :details::jsonb, NULL, :created_at)
+                    """),
+                    {
+                        "id": row_id,
+                        "merchant_id": merchant_uuid,
+                        "action": event_str,
+                        "entity_type": entity_type,
+                        "entity_id": entity_uuid,
+                        "details": details_json,
+                        "created_at": datetime.now(timezone.utc),
+                    },
+                )
+                await audit_db.commit()
+            except Exception:
+                await audit_db.rollback()
+                raise
     except Exception as e:
         logger.error(f"Audit log write failed for {event_str}: {e}")
-        try:
-            await db.rollback()
-        except Exception:
-            pass
 
 
 def audit_log_fire(
@@ -173,9 +179,10 @@ def audit_log_fire(
         audit_log_fire(db, AuditEvent.INVOICE_CREATED, merchant.id,
                        {"invoice_id": str(invoice.id)})
     """
+    del db
     try:
         asyncio.create_task(
-            _audit_log_safe(db, event, merchant_id, metadata, entity_id),
+            _audit_log_safe(event, merchant_id, metadata, entity_id),
             name=f"audit:{event}",
         )
     except RuntimeError:
@@ -184,7 +191,6 @@ def audit_log_fire(
 
 
 async def _audit_log_safe(
-    db: AsyncSession,
     event: AuditEvent | str,
     merchant_id: UUID | str | None,
     metadata: dict[str, Any] | None,
@@ -192,7 +198,7 @@ async def _audit_log_safe(
 ) -> None:
     """Wrapper that ensures audit_log never propagates exceptions."""
     try:
-        await audit_log(db, event, merchant_id, metadata, entity_id)
+        await audit_log(None, event, merchant_id, metadata, entity_id)
     except Exception as e:
         event_str = event.value if isinstance(event, AuditEvent) else str(event)
         logger.error(f"Audit fire-and-forget failed for {event_str}: {e}")
@@ -207,7 +213,6 @@ async def ensure_audit_table(db: AsyncSession) -> None:
     try:
         # Verify table exists by querying it
         await db.execute(text("SELECT 1 FROM audit_log LIMIT 0"))
-        await db.commit()
         logger.info("audit_log table verified")
     except Exception as e:
         logger.warning(f"audit_log table check failed: {e}")

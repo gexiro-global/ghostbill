@@ -112,8 +112,7 @@ async def validate_nonce(redis: Redis, nonce: str, address: str) -> tuple[bool, 
     """
     redis_key = f"{NONCE_PREFIX}{nonce}"
 
-    # Atomic get-and-delete
-    stored_address = await redis.getdel(redis_key)
+    stored_address = await redis.get(redis_key)
 
     if stored_address is None:
         return False, "Nonce expired or already used"
@@ -130,6 +129,7 @@ async def validate_nonce(redis: Redis, nonce: str, address: str) -> tuple[bool, 
         )
         return False, "Nonce not bound to this address"
 
+    await redis.delete(redis_key)
     return True, ""
 
 

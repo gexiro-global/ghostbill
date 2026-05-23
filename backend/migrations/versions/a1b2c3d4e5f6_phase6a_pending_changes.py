@@ -9,11 +9,11 @@ Changes:
 - Add pending_interval_days, pending_grace_soft, pending_grace_hard columns
 - Add billing_anchor_at column (backfilled from created_at, then NOT NULL)
 """
+
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 revision: str = "a1b2c3d4e5f6"
 down_revision: Union[str, None] = "0b5457cee966"

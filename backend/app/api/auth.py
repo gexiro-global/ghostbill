@@ -29,6 +29,9 @@ KEY_PREFIX_LENGTH = 16  # "gb_live_" (8) + 8 hex = very unique
 # Session token prefix
 SESSION_TOKEN_PREFIX = "gbs_"
 
+# Precomputed bcrypt hash for a non-existent API key. Used to equalize prefix-miss timing.
+DUMMY_API_KEY_HASH = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOwLhEv9N6JbG9sTqU77QMLf1E2cSX1vO"
+
 
 async def _auth_via_api_key(
     token: str,
@@ -43,6 +46,7 @@ async def _auth_via_api_key(
     api_keys = result.scalars().all()
 
     if not api_keys:
+        verify_api_key(token, DUMMY_API_KEY_HASH)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API key.",
@@ -75,7 +79,6 @@ async def _auth_via_api_key(
         )
 
     await db.execute(update(ApiKey).where(ApiKey.id == matched_key.id).values(last_used_at=datetime.now(timezone.utc)))
-    await db.commit()
 
     return merchant
 

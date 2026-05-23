@@ -8,12 +8,13 @@ Tiers: community, starter, growth, enterprise.
 import hashlib
 import logging
 import secrets
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import License
+from app.db.models import Invoice, License
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,56 @@ TIER_LIMITS: dict[str, dict] = {
 }
 
 LICENSE_KEY_HEX_LENGTH = 32  # 32 hex chars = 16 bytes entropy
+
+
+@dataclass(frozen=True)
+class TierCheckResult:
+    allowed: bool
+    over_limit: bool
+    tier: str
+    limit: int
+    current: int
+
+
+def tier_limit_headers(result: TierCheckResult) -> dict[str, str]:
+    """Return response headers that surface soft tier limit state."""
+    headers = {"X-License-Tier": result.tier}
+    if result.over_limit:
+        headers["X-License-Limit-Warning"] = f"{result.current}/{result.limit} {result.tier} limit exceeded"
+    return headers
+
+
+async def check_tier_limit(db: AsyncSession, merchant_id, feature: str) -> TierCheckResult:
+    """Soft-check merchant tier limits without blocking operations."""
+    tier = "community"
+    limits = TIER_LIMITS.get(tier, TIER_LIMITS["community"])
+    limit = int(limits.get(feature, -1))
+    current = 0
+
+    if feature == "invoices_per_month":
+        month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        current = (
+            await db.execute(
+                select(func.count(Invoice.id)).where(
+                    Invoice.merchant_id == merchant_id,
+                    Invoice.created_at >= month_start,
+                )
+            )
+        ).scalar_one()
+
+    over_limit = limit >= 0 and current >= limit
+    if over_limit:
+        logger.warning(
+            "LICENSE_TIER_LIMIT_SOFT merchant_id=%s tier=%s feature=%s current=%s limit=%s",
+            merchant_id,
+            tier,
+            feature,
+            current,
+            limit,
+        )
+
+    # TODO: DEC-05 hard enforcement — change allowed to False when over_limit.
+    return TierCheckResult(allowed=True, over_limit=over_limit, tier=tier, limit=limit, current=current)
 
 
 # ── Key Generation ──────────────────────────────────────────────────────────

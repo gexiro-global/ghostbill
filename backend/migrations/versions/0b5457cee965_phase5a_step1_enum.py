@@ -8,10 +8,10 @@ Note: ALTER TYPE ADD VALUE must be committed before the new value
 can be used in indexes or queries. This is split into a separate
 migration for that reason.
 """
+
 from typing import Sequence, Union
 
 from alembic import op
-
 
 revision: str = "0b5457cee965"
 down_revision: Union[str, None] = "ff232ea503f4"
@@ -20,9 +20,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.execute(
-        "ALTER TYPE subscription_status ADD VALUE IF NOT EXISTS 'past_due' BEFORE 'cancelled'"
-    )
+    op.execute("ALTER TYPE subscription_status ADD VALUE IF NOT EXISTS 'past_due' BEFORE 'cancelled'")
 
 
 def downgrade() -> None:

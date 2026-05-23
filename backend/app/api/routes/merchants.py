@@ -8,6 +8,7 @@ POST /v1/merchants/me/webhook-secret — Regenerate webhook secret (auth require
 """
 
 import logging
+import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -29,6 +30,8 @@ from app.db.session import get_db
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/merchants", tags=["merchants"])
+
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 # ─── Request / Response schemas ──────────────────────────────────────────────────
@@ -81,6 +84,13 @@ class MerchantRegisterRequest(BaseModel):
             raise ValueError("View key must be a 64-character hex string")
         return v.lower()
 
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: str | None) -> str | None:
+        if v is not None and not EMAIL_PATTERN.match(v):
+            raise ValueError("Invalid email format.")
+        return v
+
 
 class MerchantRegisterResponse(BaseModel):
     merchant_id: str
@@ -112,6 +122,13 @@ class MerchantUpdateRequest(BaseModel):
         default=None,
         description="Prepay plan configs: [{periods: 3, discount_pct: 10}, ...]",
     )
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: str | None) -> str | None:
+        if v is not None and not EMAIL_PATTERN.match(v):
+            raise ValueError("Invalid email format.")
+        return v
 
 
 class MerchantUpdateResponse(BaseModel):

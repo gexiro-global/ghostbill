@@ -10,11 +10,11 @@ Changes:
 - Add partial index on subscriptions(next_due_at) for renewer performance
 - Add index on subscription_payments(subscription_id)
 """
+
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 revision: str = "0b5457cee966"
 down_revision: Union[str, None] = "0b5457cee965"

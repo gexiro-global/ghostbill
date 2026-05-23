@@ -4,7 +4,29 @@ Phase 8A: +trial_days in create request, +trial fields in response.
 Phase 8B: +PrepayRequest, +prepaid fields in response.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+MAX_METADATA_KEYS = 20
+MAX_METADATA_KEY_LENGTH = 64
+MAX_METADATA_STRING_LENGTH = 1024
+MAX_METADATA_DEPTH = 2
+
+
+def validate_metadata_value(value, depth: int = 0) -> None:
+    if depth > MAX_METADATA_DEPTH:
+        raise ValueError("metadata nesting depth exceeds 2.")
+    if isinstance(value, dict):
+        if len(value) > MAX_METADATA_KEYS:
+            raise ValueError("metadata may contain at most 20 keys.")
+        for key, nested in value.items():
+            if not isinstance(key, str) or len(key) > MAX_METADATA_KEY_LENGTH:
+                raise ValueError("metadata keys must be strings up to 64 characters.")
+            validate_metadata_value(nested, depth + 1)
+    elif isinstance(value, list):
+        for nested in value:
+            validate_metadata_value(nested, depth + 1)
+    elif isinstance(value, str) and len(value) > MAX_METADATA_STRING_LENGTH:
+        raise ValueError("metadata string values must be at most 1024 characters.")
 
 
 class SubscriptionCreateRequest(BaseModel):
@@ -17,6 +39,13 @@ class SubscriptionCreateRequest(BaseModel):
     trial_days: int | None = Field(default=None, ge=1, le=365, description="Trial period in days (Phase 8A)")
     metadata: dict | None = Field(default=None, description="Arbitrary metadata")
 
+    @field_validator("metadata")
+    @classmethod
+    def validate_metadata(cls, value: dict | None) -> dict | None:
+        if value is not None:
+            validate_metadata_value(value)
+        return value
+
 
 class SubscriptionUpdateRequest(BaseModel):
     """Phase 6A: PATCH fields. All optional. None = clear pending change."""
@@ -26,6 +55,13 @@ class SubscriptionUpdateRequest(BaseModel):
     grace_days_soft: int | None = Field(default=None, description="New soft grace (pending)")
     grace_days_hard: int | None = Field(default=None, description="New hard grace (pending)")
     metadata: dict | None = Field(default=None, description="Metadata (immediate)")
+
+    @field_validator("metadata")
+    @classmethod
+    def validate_metadata(cls, value: dict | None) -> dict | None:
+        if value is not None:
+            validate_metadata_value(value)
+        return value
 
 
 class PrepayRequest(BaseModel):

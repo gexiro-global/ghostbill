@@ -289,7 +289,8 @@ async def detailed_health(
             "checked_out": pool.checkedout() if hasattr(pool, "checkedout") else "unknown",
         }
     except Exception as exc:
-        db_info = {"connected": False, "error": str(exc)}
+        logger.warning("Admin DB health check failed: %s", exc)
+        db_info = {"connected": False, "error": "Internal error processing request"}
 
     try:
         redis = await get_redis()
@@ -300,7 +301,8 @@ async def detailed_health(
             "connected_clients": (await redis.info("clients")).get("connected_clients", 0),
         }
     except Exception as exc:
-        redis_info = {"connected": False, "error": str(exc)}
+        logger.warning("Admin Redis health check failed: %s", exc)
+        redis_info = {"connected": False, "error": "Internal error processing request"}
 
     try:
         from app.services.monero_rpc import get_monero_rpc
@@ -309,7 +311,8 @@ async def detailed_health(
         height = await rpc.get_height()
         wallet_info = {"connected": True, "height": height}
     except Exception as exc:
-        wallet_info = {"connected": False, "error": str(exc)}
+        logger.warning("Admin wallet health check failed: %s", exc)
+        wallet_info = {"connected": False, "error": "Internal error processing request"}
 
     bg_info = {
         "detection_last_sweep": detection.get("last_sweep_at", "unknown"),
@@ -430,4 +433,4 @@ async def admin_trigger_renewal(
         return AdminActionResponse(success=True, message=msg)
     except Exception as exc:
         logger.error("Admin trigger renewal failed: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Renewal sweep failed: {exc}")
+        raise HTTPException(status_code=500, detail="Internal error processing request")

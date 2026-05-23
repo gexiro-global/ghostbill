@@ -149,6 +149,7 @@ async def list_dead_letters(
         limit=limit,
         starting_after=starting_after,
         ending_before=ending_before,
+        tenant_filter=WebhookDeadLetter.merchant_id == merchant.id,
     )
 
     return DLQCursorResponse(
@@ -247,6 +248,7 @@ async def list_webhook_deliveries(
         limit=limit,
         starting_after=starting_after,
         ending_before=ending_before,
+        tenant_filter=WebhookDelivery.merchant_id == merchant.id,
     )
 
     return WebhookCursorResponse(

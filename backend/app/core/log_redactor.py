@@ -1,7 +1,6 @@
-"""
-Log redaction filter.
+"""Log redaction filter.
 
-Attached to Python root logger — all log output passes through redactor.
+Attached to root and uvicorn handlers so child loggers cannot bypass redaction.
 Strips: API keys, view keys, tx hashes, Monero addresses, hex secrets.
 
 CRITICAL: IP addresses are never logged in the first place (by design).
@@ -90,17 +89,15 @@ class RedactionFilter(logging.Filter):
 
 
 def setup_log_redaction() -> None:
-    """Attach redaction filter to root logger.
+    """Attach redaction filter to root and uvicorn handlers.
 
     Call once during app startup (before any request processing).
     Safe to call multiple times (checks for existing filter).
     """
-    root_logger = logging.getLogger()
-
-    # Avoid double-attaching
-    for existing_filter in root_logger.filters:
-        if isinstance(existing_filter, RedactionFilter):
-            return
-
-    root_logger.addFilter(RedactionFilter())
+    redaction_filter = RedactionFilter()
+    for logger_name in ("", "uvicorn.error", "uvicorn.access"):
+        target_logger = logging.getLogger(logger_name)
+        for handler in target_logger.handlers:
+            if not any(isinstance(existing_filter, RedactionFilter) for existing_filter in handler.filters):
+                handler.addFilter(redaction_filter)
     logging.getLogger(__name__).info("Log redaction filter activated")

@@ -37,6 +37,17 @@ TERMINAL_STATUSES: set[SubscriptionStatus] = {
 }
 
 
+def transition_subscription_status(sub, new_status: SubscriptionStatus) -> None:
+    """Apply a subscription status transition with central validation."""
+    if sub.status == new_status:
+        return
+
+    if new_status not in VALID_TRANSITIONS.get(sub.status, []):
+        raise SubscriptionStateError(f"Invalid subscription transition: {sub.status.value} → {new_status.value}")
+
+    sub.status = new_status
+
+
 # ── Exceptions ──────────────────────────────────────────────────────────────
 
 

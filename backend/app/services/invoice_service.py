@@ -196,22 +196,9 @@ class InvoiceService:
         if fiat_rate is not None and fiat_rate > 0:
             fiat_amount = (amount_xmr * fiat_rate).quantize(Decimal("0.01"))
 
-        # 3. Request subaddress from wallet-rpc
+        # 3. Generate invoice id and wallet label
         invoice_id = uuid.uuid4()
         label = f"inv_{str(invoice_id)[:8]}"
-
-        try:
-            rpc = get_monero_rpc()
-            addr_result = await rpc.create_address(account_index=0, label=label)
-        except MoneroRPCConnectionError as exc:
-            logger.error("wallet-rpc unavailable during invoice creation: %s", exc)
-            raise WalletUnavailableError("Payment system is temporarily unavailable. Please try again later.") from exc
-        except MoneroRPCError as exc:
-            logger.error("wallet-rpc error during create_address: %s", exc)
-            raise WalletUnavailableError("Payment system error. Please try again later.") from exc
-
-        subaddress: str = addr_result["address"]
-        address_index: int = addr_result["address_index"]
 
         # 4. Calculate expiration
         now = datetime.now(timezone.utc)
@@ -232,8 +219,27 @@ class InvoiceService:
             expires_at=expires_at,
         )
         db.add(invoice)
+        await db.flush()
 
-        # 6. Create InvoiceAddress (1:1)
+        # 6. Request subaddress from wallet-rpc only after the invoice row is durable in this transaction.
+        try:
+            rpc = get_monero_rpc()
+            addr_result = await rpc.create_address(account_index=0, label=label)
+        except MoneroRPCConnectionError as exc:
+            await db.delete(invoice)
+            await db.flush()
+            logger.error("wallet-rpc unavailable during invoice creation: %s", exc)
+            raise WalletUnavailableError("Payment system is temporarily unavailable. Please try again later.") from exc
+        except MoneroRPCError as exc:
+            await db.delete(invoice)
+            await db.flush()
+            logger.error("wallet-rpc error during create_address: %s", exc)
+            raise WalletUnavailableError("Payment system error. Please try again later.") from exc
+
+        subaddress: str = addr_result["address"]
+        address_index: int = addr_result["address_index"]
+
+        # 7. Create InvoiceAddress (1:1)
         invoice_address = InvoiceAddress(
             invoice_id=invoice_id,
             address=subaddress,
@@ -242,7 +248,7 @@ class InvoiceService:
         )
         db.add(invoice_address)
 
-        # 7. Audit log
+        # 8. Audit log
         audit = AuditLog(
             merchant_id=merchant.id,
             action="invoice.created",

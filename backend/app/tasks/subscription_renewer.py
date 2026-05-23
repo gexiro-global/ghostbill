@@ -26,7 +26,7 @@ from app.db.models import (
 )
 from app.db.session import async_session
 from app.services.invoice_service import WalletUnavailableError
-from app.services.subscription_exceptions import SkipRenewalError
+from app.services.subscription_exceptions import SkipRenewalError, transition_subscription_status
 from app.services.subscription_grace import check_grace_periods
 from app.services.subscription_renewal import (
     create_renewal_invoice,
@@ -124,7 +124,7 @@ async def run_sweep() -> dict:
         trial_subs = list((await db.execute(trial_stmt)).scalars().all())
         for sub in trial_subs:
             try:
-                sub.status = SubscriptionStatus.active
+                transition_subscription_status(sub, SubscriptionStatus.active)
                 sub.next_due_at = datetime.now(timezone.utc)
                 await db.flush()
                 # Fire trial_ended event

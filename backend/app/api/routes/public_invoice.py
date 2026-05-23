@@ -21,16 +21,19 @@ import io
 import json
 import logging
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import segno
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from redis.asyncio import Redis
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from app.db.models import Invoice, Payment, PaymentStatus
 from app.db.session import async_session
+from app.dependencies import get_redis
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +52,7 @@ SSE_MAX_DURATION = 1800  # 30 min max connection
 
 # Terminal invoice statuses (SSE auto-closes)
 TERMINAL_STATUSES = {"paid", "expired", "cancelled"}
+QR_CACHE_TTL_MAX = 3600
 
 # Security headers for all public responses
 SECURITY_HEADERS = {
@@ -94,10 +98,39 @@ def _generate_qr_svg(data: str) -> str:
         return ""
 
 
+def _qr_cache_ttl(expires_at) -> int:
+    """Cache QR for the remaining invoice lifetime, capped at one hour."""
+    now = datetime.now(timezone.utc)
+    remaining = int((expires_at - now).total_seconds())
+    return max(1, min(QR_CACHE_TTL_MAX, remaining))
+
+
+async def _get_cached_qr_svg(redis: Redis, invoice: Invoice, monero_uri: str, address: str) -> str:
+    """Return cached QR SVG, regenerating if missing or if the invoice address changed."""
+    cache_key = f"qr:{invoice.id}"
+    cached_raw = await redis.get(cache_key)
+    if cached_raw:
+        try:
+            cached = json.loads(cached_raw)
+            if cached.get("address") == address and cached.get("svg"):
+                return cached["svg"]
+        except (TypeError, ValueError):
+            pass
+
+    qr_svg = _generate_qr_svg(monero_uri)
+    if qr_svg:
+        await redis.set(
+            cache_key,
+            json.dumps({"address": address, "svg": qr_svg}),
+            ex=_qr_cache_ttl(invoice.expires_at),
+        )
+    return qr_svg
+
+
 # ── Shared data fetcher ─────────────────────────────────────────────────────
 
 
-async def _fetch_invoice_public_data(parsed_id: uuid.UUID) -> dict | None:
+async def _fetch_invoice_public_data(parsed_id: uuid.UUID, redis: Redis | None = None) -> dict | None:
     """Fetch public invoice data. Returns dict or None if not found.
 
     Used by both GET /public and GET /events (SSE).
@@ -129,15 +162,18 @@ async def _fetch_invoice_public_data(parsed_id: uuid.UUID) -> dict | None:
         qr_svg = ""
         if address_str and invoice.status.value == "pending":
             monero_uri = _build_monero_uri(address_str, str(invoice.amount_xmr))
-            qr_svg = _generate_qr_svg(monero_uri)
+            if redis is not None:
+                qr_svg = await _get_cached_qr_svg(redis, invoice, monero_uri, address_str)
+            else:
+                qr_svg = _generate_qr_svg(monero_uri)
 
-        return {
+        metadata = invoice.metadata_json or {}
+        data = {
+            "invoice_id": str(invoice.id),
             "id": str(invoice.id),
             "amount_xmr": str(invoice.amount_xmr),
             "amount_atomic": invoice.amount_atomic,
-            "fiat_amount": str(invoice.fiat_amount) if invoice.fiat_amount is not None else None,
-            "fiat_currency": invoice.fiat_currency,
-            "description": invoice.description,
+            "monero_address": address_str,
             "address": address_str,
             "status": invoice.status.value,
             "expires_at": invoice.expires_at.isoformat(),
@@ -148,16 +184,19 @@ async def _fetch_invoice_public_data(parsed_id: uuid.UUID) -> dict | None:
             "monero_uri": monero_uri,
             "qr_svg": qr_svg,
         }
+        if metadata.get("show_description") is True:
+            data["description"] = invoice.description
+        return data
 
 
 # ── Public Invoice Data ────────────────────────────────────────────────────
 
 
 @api_router.get("/invoices/{invoice_id}/public")
-async def get_public_invoice(invoice_id: str):
+async def get_public_invoice(invoice_id: str, redis: Redis = Depends(get_redis)):
     """Get limited invoice data for public payment page."""
     parsed_id = _validate_uuid(invoice_id)
-    data = await _fetch_invoice_public_data(parsed_id)
+    data = await _fetch_invoice_public_data(parsed_id, redis)
 
     if data is None:
         raise HTTPException(
@@ -175,7 +214,7 @@ async def get_public_invoice(invoice_id: str):
 
 
 @api_router.get("/invoices/{invoice_id}/events")
-async def invoice_sse(invoice_id: str):
+async def invoice_sse(invoice_id: str, redis: Redis = Depends(get_redis)):
     """SSE stream for real-time invoice status updates.
 
     No authentication — UUID serves as access token (2^128 space).
@@ -194,7 +233,7 @@ async def invoice_sse(invoice_id: str):
     parsed_id = _validate_uuid(invoice_id)
 
     # Verify invoice exists before opening stream
-    initial = await _fetch_invoice_public_data(parsed_id)
+    initial = await _fetch_invoice_public_data(parsed_id, redis)
     if initial is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -208,7 +247,7 @@ async def invoice_sse(invoice_id: str):
         elapsed = 0
 
         while elapsed < SSE_MAX_DURATION:
-            data = await _fetch_invoice_public_data(parsed_id)
+            data = await _fetch_invoice_public_data(parsed_id, redis)
             if data is None:
                 yield 'event: close\ndata: {"reason": "not_found"}\n\n'
                 return
@@ -256,7 +295,15 @@ async def invoice_sse(invoice_id: str):
 @pay_router.get("/pay/{invoice_id}", include_in_schema=False)
 async def serve_payment_page(invoice_id: str):
     """Serve standalone payment HTML page."""
-    _validate_uuid(invoice_id)
+    parsed_id = _validate_uuid(invoice_id)
+
+    async with async_session() as db:
+        exists = (await db.execute(select(Invoice.id).where(Invoice.id == parsed_id))).scalar_one_or_none()
+    if exists is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invoice not found.",
+        )
 
     if not PAY_HTML_PATH.exists():
         raise HTTPException(

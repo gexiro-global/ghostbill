@@ -65,6 +65,15 @@ def calculate_next_due(anchor: datetime, interval_days: int, now: datetime | Non
     return anchor + periods * interval
 
 
+def calculate_skipped_periods(period_start: datetime, next_due: datetime, interval_days: int) -> int:
+    """Return billable intervals skipped when renewal advances beyond the next period."""
+    interval = timedelta(days=interval_days)
+    if interval.total_seconds() <= 0:
+        return 0
+    periods_advanced = int((next_due - period_start).total_seconds() // interval.total_seconds())
+    return max(0, periods_advanced - 1)
+
+
 # ── Pending Changes ─────────────────────────────────────────────────────
 
 
@@ -192,10 +201,21 @@ async def _create_renewal_invoice(
     db.add(sp)
 
     # 6. Advance next_due via billing anchor
-    sub.next_due_at = calculate_next_due(
+    next_due_at = calculate_next_due(
         anchor=sub.billing_anchor_at,
         interval_days=sub.interval_days,
     )
+    skipped_periods = calculate_skipped_periods(period_start, next_due_at, sub.interval_days)
+    sub.next_due_at = next_due_at
+
+    if skipped_periods > 0:
+        logger.warning(
+            "Renewal skipped %d billable periods: sub=%s, period_start=%s, next_due_at=%s",
+            skipped_periods,
+            sub.id,
+            period_start.isoformat(),
+            next_due_at.isoformat(),
+        )
 
     # 7. Audit
     db.add(
@@ -209,6 +229,7 @@ async def _create_renewal_invoice(
                 "period_start": period_start.isoformat(),
                 "period_end": period_end.isoformat(),
                 "pending_applied": applied_changes is not None,
+                "skipped_periods": skipped_periods,
             },
         )
     )
@@ -223,6 +244,7 @@ async def _create_renewal_invoice(
             "period_start": period_start.isoformat(),
             "period_end": period_end.isoformat(),
             "amount_atomic": sub.amount_atomic,
+            "skipped_periods": skipped_periods,
         },
     )
 

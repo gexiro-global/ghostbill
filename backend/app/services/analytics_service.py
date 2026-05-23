@@ -74,13 +74,15 @@ async def get_revenue(
     days = PERIOD_DAYS.get(period, 30)
     start = datetime.now(timezone.utc) - timedelta(days=days)
 
-    day_col = func.date_trunc("day", Payment.confirmed_at)
+    day_col = func.date_trunc("day", func.min(Payment.confirmed_at))
 
     stmt = (
         select(
+            Invoice.id.label("invoice_id"),
+            Invoice.amount_atomic.label("invoice_amount_atomic"),
             day_col.label("day"),
             func.count().label("count"),
-            func.sum(Payment.amount_atomic).label("total_atomic"),
+            func.sum(Payment.amount_atomic).label("gross_received_atomic"),
         )
         .join(Invoice, Payment.invoice_id == Invoice.id)
         .where(
@@ -89,34 +91,56 @@ async def get_revenue(
             Payment.confirmed_at >= start,
             Payment.confirmed_at.isnot(None),
         )
-        .group_by(day_col)
+        .group_by(Invoice.id, Invoice.amount_atomic)
         .order_by(day_col)
     )
 
     rows = (await db.execute(stmt)).all()
 
-    data = []
-    grand_total = 0
+    daily: dict[str, dict] = {}
+    grand_gross_received = 0
+    grand_invoice_revenue = 0
     grand_count = 0
 
     for row in rows:
-        atomic = int(row.total_atomic or 0)
-        grand_total += atomic
-        grand_count += row.count
-        data.append(
+        gross_received_atomic = int(row.gross_received_atomic or 0)
+        invoice_revenue_atomic = min(gross_received_atomic, int(row.invoice_amount_atomic or 0))
+        date_key = row.day.strftime("%Y-%m-%d")
+        point = daily.setdefault(
+            date_key,
             {
-                "date": row.day.strftime("%Y-%m-%d"),
-                "count": row.count,
-                "amount_atomic": atomic,
-                "amount_xmr": _atomic_to_xmr(atomic),
-            }
+                "date": date_key,
+                "count": 0,
+                "gross_received_atomic": 0,
+                "gross_received_xmr": _atomic_to_xmr(0),
+                "invoice_revenue_atomic": 0,
+                "invoice_revenue_xmr": _atomic_to_xmr(0),
+                "amount_atomic": 0,
+                "amount_xmr": _atomic_to_xmr(0),
+            },
         )
+        point["count"] += row.count
+        point["gross_received_atomic"] += gross_received_atomic
+        point["invoice_revenue_atomic"] += invoice_revenue_atomic
+        point["amount_atomic"] = point["invoice_revenue_atomic"]
+        point["gross_received_xmr"] = _atomic_to_xmr(point["gross_received_atomic"])
+        point["invoice_revenue_xmr"] = _atomic_to_xmr(point["invoice_revenue_atomic"])
+        point["amount_xmr"] = point["invoice_revenue_xmr"]
+        grand_gross_received += gross_received_atomic
+        grand_invoice_revenue += invoice_revenue_atomic
+        grand_count += row.count
+
+    data = [daily[key] for key in sorted(daily)]
 
     result = {
         "period": period,
         "data": data,
-        "total_atomic": grand_total,
-        "total_xmr": _atomic_to_xmr(grand_total),
+        "gross_received_atomic": grand_gross_received,
+        "gross_received_xmr": _atomic_to_xmr(grand_gross_received),
+        "invoice_revenue_atomic": grand_invoice_revenue,
+        "invoice_revenue_xmr": _atomic_to_xmr(grand_invoice_revenue),
+        "total_atomic": grand_invoice_revenue,
+        "total_xmr": _atomic_to_xmr(grand_invoice_revenue),
         "total_payments": grand_count,
     }
 

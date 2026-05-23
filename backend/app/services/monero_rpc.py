@@ -25,6 +25,11 @@ DUST_THRESHOLD_ATOMIC: int = 100_000_000  # 0.0001 XMR
 
 MAX_RETRIES: int = 3
 RETRY_BACKOFF_BASE: float = 1.0  # seconds
+RETRYABLE_RPC_ERRORS: set[int] = {
+    -4,  # wallet is busy / refresh in progress on some wallet-rpc versions
+    -13,  # wallet not synced
+    -14,  # wallet refresh in progress
+}
 
 
 def atomic_to_xmr(atomic: int) -> Decimal:
@@ -122,9 +127,24 @@ class MoneroRPC:
 
                 return data.get("result", {})
 
-            except MoneroRPCError:
-                # RPC-level errors: don't retry, propagate immediately
-                raise
+            except MoneroRPCError as exc:
+                if exc.code not in RETRYABLE_RPC_ERRORS:
+                    raise
+
+                last_exception = exc
+                wait = RETRY_BACKOFF_BASE * (2**attempt)
+                logger.warning(
+                    "wallet-rpc %s attempt %d/%d returned retryable RPC error %s: %s. Retrying in %.1fs",
+                    method,
+                    attempt + 1,
+                    MAX_RETRIES,
+                    exc.code,
+                    exc.message,
+                    wait,
+                )
+                if attempt < MAX_RETRIES - 1:
+                    await asyncio.sleep(wait)
+                    continue
 
             except (httpx.HTTPError, httpx.TimeoutException, OSError) as exc:
                 last_exception = exc

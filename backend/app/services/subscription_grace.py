@@ -26,6 +26,7 @@ from app.db.models import (
     SubscriptionPayment,
     SubscriptionStatus,
 )
+from app.services.subscription_exceptions import transition_subscription_status
 from app.services.subscription_renewal import log_renewal_event
 
 logger = logging.getLogger(__name__)
@@ -98,7 +99,7 @@ async def handle_subscription_payment(
         return
 
     if sub.status == SubscriptionStatus.past_due:
-        sub.status = SubscriptionStatus.active
+        transition_subscription_status(sub, SubscriptionStatus.active)
         logger.info("Subscription %s: past_due → active (invoice %s paid)", sub.id, invoice_id)
 
     await db.flush()
@@ -126,7 +127,7 @@ async def check_grace_periods(db: AsyncSession) -> dict[str, int]:
         .group_by(Subscription.id)
     )
     for sub in (await db.execute(soft_stmt)).scalars().all():
-        sub.status = SubscriptionStatus.past_due
+        transition_subscription_status(sub, SubscriptionStatus.past_due)
         counts["soft"] += 1
         logger.info("Subscription %s → past_due (soft grace)", sub.id)
         # Phase 6C: log event
@@ -141,11 +142,12 @@ async def check_grace_periods(db: AsyncSession) -> dict[str, int]:
             Subscription.status == SubscriptionStatus.past_due,
             Invoice.status.in_([InvoiceStatus.pending, InvoiceStatus.partially_paid]),
             SubscriptionPayment.period_start + text("make_interval(days => subscriptions.grace_days_hard)") < now,
+            Invoice.expires_at <= now,
         )
         .group_by(Subscription.id)
     )
     for sub in (await db.execute(hard_stmt)).scalars().all():
-        sub.status = SubscriptionStatus.expired
+        transition_subscription_status(sub, SubscriptionStatus.expired)
         counts["hard"] += 1
         logger.info("Subscription %s → expired (hard grace)", sub.id)
         # Phase 6C: log event
@@ -181,7 +183,7 @@ async def check_grace_periods(db: AsyncSession) -> dict[str, int]:
         .group_by(Subscription.id)
     )
     for sub in (await db.execute(recovery_stmt)).scalars().all():
-        sub.status = SubscriptionStatus.active
+        transition_subscription_status(sub, SubscriptionStatus.active)
         counts["recovered"] += 1
         logger.info("Subscription %s → active (recovery)", sub.id)
         # Phase 6C: log event

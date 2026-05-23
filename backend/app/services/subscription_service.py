@@ -19,6 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
+    AuditLog,
     Customer,
     Invoice,
     InvoiceStatus,
@@ -35,6 +36,7 @@ from app.services.subscription_exceptions import (
     SubscriptionNotFoundError,
     SubscriptionStateError,
     SubscriptionValidationError,
+    transition_subscription_status,
 )
 from app.services.subscription_renewal import _create_renewal_invoice
 
@@ -218,7 +220,7 @@ class SubscriptionService:
         sub = await self._get_for_update(db, merchant_id, subscription_id)
         if sub.status != SubscriptionStatus.active:
             raise SubscriptionStateError(f"Cannot pause subscription with status '{sub.status.value}'.")
-        sub.status = SubscriptionStatus.paused
+        transition_subscription_status(sub, SubscriptionStatus.paused)
         await db.flush()
         # Phase 6B: fire subscription.paused event
         await self._fire_lifecycle_event(db, "subscription.paused", sub, reason="merchant_action")
@@ -236,7 +238,7 @@ class SubscriptionService:
         now = datetime.now(timezone.utc)
         if sub.next_due_at and sub.next_due_at < now:
             sub.next_due_at = now
-        sub.status = SubscriptionStatus.active
+        transition_subscription_status(sub, SubscriptionStatus.active)
         await db.flush()
         # Phase 6B: fire subscription.resumed event
         await self._fire_lifecycle_event(db, "subscription.resumed", sub, reason="merchant_action")
@@ -253,8 +255,10 @@ class SubscriptionService:
         sub = await self._get_for_update(db, merchant_id, subscription_id)
         if sub.status in TERMINAL_STATUSES:
             raise SubscriptionStateError(f"Subscription is already {sub.status.value}.")
-        sub.status = SubscriptionStatus.cancelled
+        transition_subscription_status(sub, SubscriptionStatus.cancelled)
         sub.cancelled_at = datetime.now(timezone.utc)
+        invoice_cancellation_failed = False
+        failed_invoice_id: str | None = None
         sp_stmt = (
             select(SubscriptionPayment)
             .join(Invoice, SubscriptionPayment.invoice_id == Invoice.id)
@@ -264,8 +268,35 @@ class SubscriptionService:
             try:
                 await inv_svc.cancel_invoice(db, merchant_id, sp.invoice_id)
             except Exception as exc:
-                logger.warning("Failed to cancel invoice %s: %s", sp.invoice_id, exc)
+                invoice_cancellation_failed = True
+                failed_invoice_id = str(sp.invoice_id)
+                logger.error("Failed to cancel invoice %s during subscription cancellation: %s", sp.invoice_id, exc)
+        db.add(
+            AuditLog(
+                merchant_id=merchant_id,
+                action="subscription.cancelled",
+                entity_type="subscription",
+                entity_id=sub.id,
+                details={
+                    "invoice_cancellation_failed": invoice_cancellation_failed,
+                    "invoice_id": failed_invoice_id,
+                },
+            )
+        )
         await db.flush()
+        await self._fire_lifecycle_event(
+            db,
+            "subscription.cancelled",
+            sub,
+            reason="merchant_action",
+            metadata={
+                "invoice_cancellation_failed": invoice_cancellation_failed,
+                "invoice_id": failed_invoice_id,
+                "warning": "invoice_cancellation_failed",
+            }
+            if invoice_cancellation_failed
+            else None,
+        )
         return sub
 
     # ── Helpers ─────────────────────────────────────────────────────
@@ -292,14 +323,19 @@ class SubscriptionService:
         event_type: str,
         sub: Subscription,
         reason: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Fire a subscription lifecycle webhook event."""
         try:
             from app.services.webhook_service import webhook_service
 
-            await webhook_service.dispatch_subscription_event(
+            delivery = await webhook_service.dispatch_subscription_event(
                 db=db, event_type=event_type, subscription=sub, reason=reason
             )
+            if delivery is not None and metadata:
+                payload = dict(delivery.payload or {})
+                payload.setdefault("metadata", {}).update(metadata)
+                delivery.payload = payload
         except Exception as exc:
             logger.warning("Failed to fire %s for sub %s: %s", event_type, sub.id, exc)
 

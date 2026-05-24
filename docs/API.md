@@ -1,6 +1,6 @@
 # GhostBill API Reference
 
-**Version:** 0.1.0  
+**Version:** v1.3-rc3  
 **Base URL:** `http://127.0.0.1:8013` (clearnet) or `http://<onion>.onion` (Tor)  
 **Content-Type:** `application/json`
 
@@ -186,7 +186,7 @@ curl http://127.0.0.1:8013/health
 {
   "status": "healthy",
   "app": "GhostBill",
-  "version": "0.1.0",
+  "version": "1.3-rc3",
   "detection": {
     "last_scan_at": "2026-04-25T10:00:00Z",
     "blocks_behind": 0,

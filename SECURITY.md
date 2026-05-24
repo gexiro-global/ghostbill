@@ -2,50 +2,36 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in GhostBill, please report it responsibly.
+Please do not open public GitHub issues for security vulnerabilities.
 
-**Report via:** [ghostbill.org/security](https://ghostbill.org/security)
+Use the official GhostBill website for current security contact and disclosure instructions:
 
-Please include:
+https://ghostbill.org
 
-- Description of the vulnerability
-- Steps to reproduce
-- Potential impact
-- Suggested fix (if any)
-
-Do **not** open a public GitHub issue for security vulnerabilities.
-
-## Response Timeline
-
-We aim to:
-
-- Acknowledge your report within 48 hours
-- Provide an initial assessment within 7 days
-- Release a fix within 30 days for confirmed vulnerabilities
+Do not include private keys, wallet seeds, production secrets, customer data, or exploit payloads against third-party systems.
 
 ## Scope
 
-The following are in scope:
+In scope:
 
 - GhostBill backend API (`backend/app/`)
 - Database schema and migrations
 - Authentication and authorization logic
 - Webhook signature verification
-- Encryption (AES-256-GCM for view keys)
-- Payment processing logic (detection, confirmation, settlement)
+- Payment detection, confirmation, settlement, and reorg logic
 - Subscription lifecycle management
 
-The following are out of scope:
+Out of scope:
 
-- Monero protocol vulnerabilities (report to the Monero project)
-- monero-wallet-rpc vulnerabilities (report to the Monero project)
-- Issues in third-party dependencies (report upstream)
-- Landing page (ghostbill.org)
-- Social engineering attacks
+- GhostBill landing page / website source
+- Monero protocol vulnerabilities
+- monero-wallet-rpc vulnerabilities
+- Third-party dependency vulnerabilities
+- Social engineering
 
 ## Security Audit History
 
-GhostBill has undergone a 5-wave automated security audit (Codex) covering ~11,200 lines of backend code across 67 files. 82 of 99 identified findings have been resolved.
+GhostBill has undergone a 5-wave automated security audit covering ~11,200 lines of backend code across 67 files. 82 of 99 identified findings have been resolved.
 
 | Wave | Focus | Findings Closed |
 |------|-------|----------------|
@@ -56,6 +42,6 @@ GhostBill has undergone a 5-wave automated security audit (Codex) covering ~11,2
 | Wave 4 | Background tasks, webhook atomicity, crypto hardening | 22 |
 | Wave 5 | Service-level test suite rebuild (59 tests) | 14 |
 
-## Disclosure Policy
+## Disclosure
 
-We follow coordinated disclosure. We will credit reporters (unless they prefer anonymity) and will not take legal action against good-faith security researchers.
+We prefer coordinated disclosure for good-faith reports.

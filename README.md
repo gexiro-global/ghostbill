@@ -176,7 +176,7 @@ You can use, modify, and self-host GhostBill freely. If you modify it and offer 
 
 ## Security
 
-Found a vulnerability? Please report it via [ghostbill.org/security](https://ghostbill.org/security). Do not open a public issue.
+Found a vulnerability? Do not open a public issue. See [SECURITY.md](SECURITY.md) for disclosure instructions.
 
 See [SECURITY.md](SECURITY.md) for our disclosure policy.
 
@@ -190,4 +190,6 @@ See [SECURITY.md](SECURITY.md) for our disclosure policy.
 
 ---
 
-**Built by [Gexiro Global Enterprises Ltd](https://gexiro.com), Gibraltar.**
+**Built by Gexiro Global Enterprises Ltd.**
+
+Official project website: [ghostbill.org](https://ghostbill.org)

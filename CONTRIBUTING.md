@@ -97,7 +97,7 @@ during temporary RPC hiccups.
 
 **Do NOT open a public issue for security vulnerabilities.**
 
-Report via **[ghostbill.org/security](https://ghostbill.org/security)** with:
+Report via the official GhostBill website (https://ghostbill.org) with:
 - Description of the vulnerability
 - Steps to reproduce
 - Potential impact

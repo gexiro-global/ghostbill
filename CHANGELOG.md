@@ -6,18 +6,20 @@ All notable changes to GhostBill are documented in this file.
 
 ### Changed
 
-- Rewrote README for public release-candidate positioning
-- Added root SECURITY.md with responsible disclosure guidance
-- Added CHANGELOG.md covering audit waves and CI release gate
+- Prepared public release-candidate documentation
+- Removed landing page source from public repository (OPSEC)
 - Removed internal OUTREACH.md from public repository
-- Neutralized deployment paths and softened absolute security claims
-- Secret scan verified clean before public push
+- Replaced direct email disclosure references with ghostbill.org
+- Corrected organization name to Gexiro Global Enterprises Ltd
+- Aligned public status with v1.3-rc2
+- Simplified deployment documentation for release-candidate safety
 
 ### Verified
 
-- GitHub Actions CI green on GitHub runner
-- Fresh clone release gate passed
-- Branch protection configured (required CI, enforce admins, no force push)
+- GitHub Actions CI green
+- Fresh clone CI release gate green
+- Secret scan clean
+- Public documentation reviewed for OPSEC
 
 ## [1.3-rc1] - 2026-05-24
 

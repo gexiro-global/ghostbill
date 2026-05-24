@@ -6,7 +6,7 @@ All notable changes to GhostBill are documented in this file.
 
 ### Security
 
-- Hardened wallet-rpc network binding (removed host network mode)
+- Hardened wallet-rpc network binding (bound to the Docker bridge gateway instead of all interfaces)
 - Enforced strict AAD validation in AES-GCM decrypt (no silent fallback)
 - Added Redis authentication (requirepass)
 - Backend container runs as non-root user

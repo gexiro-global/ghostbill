@@ -32,8 +32,9 @@ services:
 
   redis:
     image: redis:7-alpine
+    command: redis-server --requirepass ci_test_redis_password
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "ci_test_redis_password", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10

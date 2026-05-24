@@ -33,11 +33,8 @@ LEASE_KEY_PREFIX: str = "ghostbill:lease:"
 
 
 async def _get_redis() -> aioredis.Redis:
-    """Get Redis connection."""
-    return aioredis.from_url(
-        f"redis://{settings.redis_host}:{settings.redis_port}",
-        decode_responses=True,
-    )
+    """Get Redis connection. Uses settings.redis_dsn which respects REDIS_PASSWORD."""
+    return aioredis.from_url(settings.redis_dsn, decode_responses=True)
 
 
 async def get_last_scanned_height() -> int:

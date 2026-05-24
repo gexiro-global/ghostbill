@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     # App
     app_name: str = "GhostBill"
-    app_version: str = "1.2.0-beta"
+    app_version: str = "1.3-rc3"
     app_env: str = "production"
     debug: bool = False
     secret_key: str = ""
@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     # Redis
     redis_host: str = "ghostbill_redis"
     redis_port: int = 6379
+    redis_password: str = ""
     redis_url: str = ""
 
     # monerod RPC
@@ -73,6 +74,8 @@ class Settings(BaseSettings):
     def redis_dsn(self) -> str:
         if self.redis_url:
             return self.redis_url
+        if self.redis_password:
+            return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/0"
         return f"redis://{self.redis_host}:{self.redis_port}/0"
 
     model_config = {"env_file": ".env", "case_sensitive": False}

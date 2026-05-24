@@ -457,11 +457,24 @@ class PaymentService:
 
                 await handle_subscription_payment(db, invoice.id)
             except Exception as exc:
-                logger.warning(
+                logger.error(
                     "Subscription payment hook failed for invoice %s: %s",
                     invoice.id,
                     exc,
                 )
+                # Record failure in audit log for operator visibility
+                try:
+                    audit_entry = AuditLog(
+                        merchant_id=invoice.merchant_id,
+                        action="subscription_hook_failed",
+                        entity_type="invoice",
+                        entity_id=invoice.id,
+                        details={"error": str(exc), "invoice_status": invoice.status.value},
+                    )
+                    db.add(audit_entry)
+                    # Don't await commit here — it will be committed with the parent transaction
+                except Exception:
+                    logger.error("Failed to write audit log for subscription hook failure on invoice %s", invoice.id)
         # === END Phase 5A ===
 
         return invoice.status

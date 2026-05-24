@@ -19,7 +19,7 @@ sed -i 's/^#\?MaxAuthTries.*/MaxAuthTries 3/' /etc/ssh/sshd_config
 sed -i 's/^#\?X11Forwarding.*/X11Forwarding no/' /etc/ssh/sshd_config
 sed -i 's/^#\?AllowAgentForwarding.*/AllowAgentForwarding no/' /etc/ssh/sshd_config
 
-systemctl restart sshd
+systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || echo "WARNING: Could not restart SSH daemon. Restart manually."
 echo "  SSH: key-only auth, root via key only, max 3 attempts"
 
 # ─── 2. UFW Firewall ─────────────────────────────────────────────────────────

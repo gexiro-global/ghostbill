@@ -134,18 +134,20 @@ class ViewKeyEncryption:
 
         try:
             decrypt_aad = self._aad(merchant_id, aad) if version == 1 else None
-            try:
-                plaintext_bytes = self._aesgcm.decrypt(nonce, ciphertext_with_tag, decrypt_aad)
-            except InvalidTag:
-                if version == 1 and decrypt_aad is not None:
-                    plaintext_bytes = self._aesgcm.decrypt(nonce, ciphertext_with_tag, None)
-                else:
-                    raise
+            plaintext_bytes = self._aesgcm.decrypt(nonce, ciphertext_with_tag, decrypt_aad)
             return plaintext_bytes.decode("utf-8")
         except InvalidTag:
             raise DecryptionError("Decryption failed: invalid tag. Wrong master key or data has been tampered with.")
         except Exception as e:
             raise DecryptionError(f"Decryption failed: {e}") from e
+
+    def decrypt_legacy_no_aad(self, encrypted_b64: str) -> str:
+        """Decrypt legacy data that was encrypted without AAD.
+
+        Only for explicit migration use. Normal code paths must use decrypt().
+        """
+        logger.warning("Legacy no-AAD decrypt used — migrate data with re_encrypt()")
+        return self.decrypt(encrypted_b64)
 
     def re_encrypt(self, encrypted_b64: str, merchant_id: str | None = None, aad: bytes | str | None = None) -> str:
         """Decrypt and re-encrypt with a new nonce.

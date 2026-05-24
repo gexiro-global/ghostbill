@@ -2,6 +2,21 @@
 
 All notable changes to GhostBill are documented in this file.
 
+## [1.3-rc3] - 2026-05-24
+
+### Security
+
+- Hardened wallet-rpc network binding (removed host network mode)
+- Enforced strict AAD validation in AES-GCM decrypt (no silent fallback)
+- Added Redis authentication (requirepass)
+- Backend container runs as non-root user
+
+### Fixed
+
+- Version alignment across all config files
+- API key updated_at tracking on raw DB updates
+- SSH hardening script distro compatibility
+
 ## [1.3-rc2] - 2026-05-24
 
 ### Changed

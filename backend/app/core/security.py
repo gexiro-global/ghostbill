@@ -62,6 +62,10 @@ def hash_api_key(plain_key: str) -> str:
         bcrypt hash string (stored in api_keys.key_hash).
     """
     key_bytes = plain_key.encode("utf-8")
+    if len(key_bytes) > 72:
+        raise ValueError(
+            f"API key too long for bcrypt: {len(key_bytes)} bytes (max 72). Use shorter key or migrate hash scheme."
+        )
     salt = bcrypt.gensalt(rounds=BCRYPT_ROUNDS)
     hashed = bcrypt.hashpw(key_bytes, salt)
     return hashed.decode("utf-8")

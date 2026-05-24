@@ -29,7 +29,7 @@ For self-hosted production deployment, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.
 
 ## Why GhostBill?
 
-**Non-custodial** — Operates with your view key only. Your spend key never touches the server. Even a full server compromise cannot move funds.
+**Non-custodial** — Operates with your view key only. The server is designed not to hold spend keys, so it cannot initiate Monero spends from merchant wallets.
 
 **Privacy-first** — No IP logging, no analytics, no tracking. Log redaction strips sensitive data. Timing jitter on responses. Tor hidden services supported for API and dashboard.
 

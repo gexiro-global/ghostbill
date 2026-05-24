@@ -23,11 +23,11 @@ GhostBill is designed with a **privacy-first, non-custodial** architecture. This
 
 ## Non-Custodial Architecture
 
-**GhostBill cannot spend your funds.** This is the most important security property of the system.
+**GhostBill is designed not to hold spend keys.** This is the most important security property of the system.
 
 GhostBill operates in **view-only mode**. When a merchant registers, they provide their Monero primary address and **secret view key**. The view key allows GhostBill to detect incoming payments, but it **cannot create transactions or move funds**. The merchant's spend key never leaves their wallet.
 
-Even in the worst-case scenario — a full server compromise with root access — an attacker cannot steal a single piconero. They could see transaction history and metadata, but moving funds requires the spend key, which the server is designed never to hold.
+Even in the worst-case scenario — a full server compromise with root access — an attacker could see transaction history and metadata, but moving funds requires the spend key, which the server is designed never to hold.
 
 **What GhostBill can do with a view key:**
 - Detect incoming payments to subaddresses

@@ -1,0 +1,24 @@
+name: Issue Anti-Scam Auto-Reply
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+
+jobs:
+  reply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout reply template
+        uses: actions/checkout@v4
+      - name: Post auto-reply comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" \
+            --body-file .github/issue_create_auto_reply.md \
+            --repo "$REPO"

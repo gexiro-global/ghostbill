@@ -1,0 +1,62 @@
+# =============================================================================
+# GhostBill CI/CD Test Compose
+# =============================================================================
+# Minimal stack for CI: PostgreSQL + Redis + Backend.
+# No wallet-rpc, no frontend, no Tor, no production secrets.
+#
+# Usage:
+#   cp .env.test.example .env.test
+#   docker compose -f docker-compose.test.yml up -d --build
+#   docker compose -f docker-compose.test.yml exec backend pytest tests/ --ignore=tests/wave3a -v
+#   docker compose -f docker-compose.test.yml down -v
+# =============================================================================
+
+# ISOLATION: explicit project name prevents "down --remove-orphans"
+# from affecting production containers in the same directory.
+name: ghostbill-ci
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ghostbill_test
+      POSTGRES_PASSWORD: ci_test_password_not_for_production
+      POSTGRES_DB: ghostbill_test
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ghostbill_test -d ghostbill_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - .env.test
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./tests:/app/tests:ro
+      - ./pytest.ini:/app/pytest.ini:ro
+    command: >
+      sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s

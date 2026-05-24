@@ -63,3 +63,4 @@ backend.bak_2026-03-26/
 backend.bak_*
 *.bak_*
 frontend/
+.env.test

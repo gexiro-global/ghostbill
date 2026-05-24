@@ -1,26 +1,43 @@
 # GhostBill
 
-**Privacy-first billing for the Monero economy.**
+**Self-hostable Monero payment processor with recurring billing.**
 
-Non-custodial. Tor-native. Open source.
+Non-custodial. Privacy-first. Open source.
 
-GhostBill is a self-hosted Monero payment processor for merchants who need reliable, private, and automated billing — including recurring subscriptions. It detects payments in real-time, manages invoice lifecycles, handles subscription renewals with grace periods, and delivers webhook notifications — all without ever holding your funds.
+GhostBill is a self-hosted Monero payment processor for merchants who need reliable, private, and automated billing — including recurring subscriptions. It detects payments in real time, manages invoice lifecycles, handles subscription renewals with grace periods, and delivers webhook notifications — all without ever holding your funds.
+
+> **Status:** Audited release candidate (`v1.3-rc1`). Core payment processing and subscription lifecycle are tested across 5 security audit waves (82/99 findings closed). CI verifies clean install, migrations, lint/format, and the service-level release gate. Not yet battle-tested in high-volume production environments.
+
+---
+
+## Quick Start (Test / CI)
+
+Verify GhostBill builds and passes tests from a clean checkout:
+
+```bash
+git clone https://github.com/gexiro-global/ghostbill.git
+cd ghostbill
+cp .env.test.example .env.test
+./scripts/ci-test.sh
+```
+
+This builds containers from scratch, runs `alembic upgrade head` on a fresh PostgreSQL, checks lint/format, and executes the service-level test suite. No wallet-rpc, no Tor, no production secrets required.
+
+For self-hosted production deployment, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ---
 
 ## Why GhostBill?
 
-**Non-Custodial** — GhostBill operates with your view key only. Your spend key never touches the server. Even a full server compromise cannot move a single piconero.
+**Non-custodial** — Operates with your view key only. Your spend key never touches the server. Even a full server compromise cannot move funds.
 
-**Tor-Native** — API and dashboard accessible via `.onion` hidden services. All outgoing connections (webhooks, price feeds) routed through Tor. Your IP and your merchants' IPs are never exposed.
+**Privacy-first** — No IP logging, no analytics, no tracking. Log redaction strips sensitive data. Timing jitter on responses. Tor hidden services supported for API and dashboard.
 
-**Real-Time Detection** — Payments detected in the mempool within seconds (`pool: true`). No waiting for block confirmations to notify your system.
+**Real-time detection** — Payments detected in the mempool within seconds. Confirmed-only settlement (10 confirmations) prevents double-spend risk.
 
-**Full Subscription Lifecycle** — Recurring billing with configurable intervals, grace periods, trial periods (1–365 days), pre-payment with discounts, and pending changes applied at next renewal.
+**Full subscription lifecycle** — Recurring billing with configurable intervals, soft/hard grace periods, trial periods, pre-payment with discounts, and pending changes applied at next renewal.
 
-**20 Webhook Events** — HMAC-SHA256 signed, 7 automatic retries over 38 hours, Dead Letter Queue for failed deliveries, and manual retry via API.
-
-**Privacy by Default** — No IP logging, no analytics, no tracking. Log redaction strips sensitive data. Timing jitter prevents correlation attacks. Expired invoices auto-deleted after 48 hours.
+**Webhook delivery** — 22 event types, HMAC-SHA256 signed, 7 automatic retries over 38 hours, Dead Letter Queue for failed deliveries.
 
 ---
 
@@ -28,175 +45,111 @@ GhostBill is a self-hosted Monero payment processor for merchants who need relia
 
 | Feature | Description |
 |---------|-------------|
-| View-only wallet | Cannot spend funds — cryptographically impossible |
+| View-only wallet | Server holds view keys only; spend keys remain outside the server |
 | Subaddress per invoice | Unique payment address, no address reuse |
-| Mempool detection | Instant payment notification (`pool: true`) |
+| Confirmed-only settlement | 10-confirmation threshold before marking paid |
+| Reorg protection | Automatic reversal if confirmed payment is orphaned |
 | 7 invoice statuses | pending, paid, expired, partially_paid, overpaid, late_paid, cancelled |
 | 6 subscription statuses | active, paused, past_due, cancelled, expired, trialing |
-| 20 webhook events | HMAC-SHA256 signed, 7 retries, Dead Letter Queue |
-| Trial periods | 1–365 days, auto-activate to first invoice on expiry |
-| Pre-payment | Pay 1–36 periods upfront with configurable merchant discounts |
-| Pending changes | Update subscription amount/interval, applied at next renewal |
-| Billing anchor | Deterministic renewal dates, no drift over time |
-| Analytics dashboard | Revenue charts, invoice stats, subscription metrics (Redis-cached) |
-| SSE real-time | Server-Sent Events on payment pages with polling fallback |
-| Cursor pagination | Stripe-compatible (`starting_after`, `ending_before`, `has_more`) on all list endpoints |
+| 22 webhook events | HMAC-SHA256 signed, 7 retries, Dead Letter Queue |
+| Trial periods | 1–365 days, auto-activate on expiry |
+| Pre-payment | 1–36 periods upfront with configurable discounts |
+| Cursor pagination | Stripe-compatible (`starting_after`, `ending_before`, `has_more`) |
 | Monero signature auth | Passwordless dashboard login via wallet signing |
-| API key management | `gb_live_` / `gb_test_` keys, bcrypt hashed, max 10 per merchant |
-| Rate limiting | IP-based sliding window + per-merchant limits (120 write, 300 read per minute) |
+| API key management | `gb_live_` / `gb_test_` keys, bcrypt hashed |
+| Rate limiting | IP-based sliding window + per-merchant limits |
 | AES-256-GCM encryption | View keys encrypted at rest |
-| Audit logging | 14 event types, async, non-blocking |
-| Tor hidden services | `.onion` for API + dashboard |
-| Outgoing Tor proxy | Webhooks and price feed via SOCKS5 |
-| Security headers | CSP, HSTS, X-Frame-Options, Permissions-Policy |
-| Timing jitter | 50–200ms random delay on all responses |
-| Data retention | Auto-cleanup: 48h expired invoices, 30d webhooks, 90d audit |
-| Admin panel | Instance operator dashboard with health monitoring, DLQ management, merchant toggle |
-| Dark mode dashboard | Invoice management, payment tracking, subscription control, webhook logs |
-
----
-
-## Quick Start
-
-```bash
-# Clone
-git clone https://github.com/nicknull/ghostbill.git
-cd ghostbill
-
-# Configure
-cp .env.example .env
-# Generate secrets on server: openssl rand -hex 32
-# Edit .env with your values
-
-# Start
-docker compose up -d postgres redis
-docker compose run --rm backend alembic upgrade head
-docker compose up -d
-
-# Verify
-curl http://127.0.0.1:8013/health
-# {"status":"healthy","app":"GhostBill","version":"0.1.0","detection":{...}}
-```
-
-See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full self-hosted setup guide.
+| Audit logging | Async, non-blocking |
+| SSE real-time | Server-Sent Events on payment pages |
+| Admin panel | Instance operator dashboard with health monitoring |
 
 ---
 
 ## Architecture
 
 ```
-Client → Tor Hidden Service → Backend (FastAPI :8013)
-                                  ├── PostgreSQL :5445  (14 tables, 4 enums)
-                                  ├── Redis :6391       (rate limits, sessions, analytics cache)
-                                  └── wallet-rpc :18083 (view-only, subaddress generation)
-                                        └── monerod      (pruned node, Tor p2p)
+Client → Backend (FastAPI)
+             ├── PostgreSQL  (14 tables, 4 enums, 15 migrations)
+             ├── Redis       (rate limits, sessions, analytics cache)
+             └── wallet-rpc  (view-only, subaddress generation)
+                   └── monerod
 
-Dashboard → Tor Hidden Service → Frontend (Next.js :3013)
-
-Landing → Cloudflare → ghostbill.org (Vite + React SPA, 8 languages)
+Dashboard → Frontend (Next.js 15)
 ```
 
 **Stack:** FastAPI + PostgreSQL + Redis + monero-wallet-rpc + Next.js 15 + Tailwind CSS
 
-**Docker Compose:** 5 containers — postgres, redis, backend, frontend, walletrpc. All ports bound to `127.0.0.1`.
+**Docker Compose:** 4 service containers (postgres, redis, backend, walletrpc) + optional frontend.
 
 ---
 
 ## API
 
-**Base URL:** `http://127.0.0.1:8013` or `http://<onion>.onion`
-
-**Authentication:** `Authorization: Bearer gb_live_<hex32>`
-
-**51 endpoints** across 13 route modules:
+53 endpoints across 14 route modules. Authentication via `Authorization: Bearer gb_live_<hex>`.
 
 | Resource | Endpoints | Description |
 |----------|-----------|-------------|
-| Merchants | 4 | Register, get/update profile, regenerate webhook secret |
+| Merchants | 4 | Register, profile, webhook secret |
 | Invoices | 4 | Create, list, get, cancel |
 | Payments | 2 | List, get |
 | Customers | 4 | Create, list, get, update |
-| Subscriptions | 9 | Create, list, get, update (pending changes), pause, resume, cancel, prepay, renewal log |
-| Webhooks | 5 | List deliveries, get detail, retry, Dead Letter Queue list, DLQ retry |
+| Subscriptions | 9 | Full lifecycle, prepay, pending changes |
+| Webhooks | 5 | Deliveries, retry, DLQ |
 | API Keys | 3 | List, create, revoke |
-| Analytics | 3 | Revenue over time, invoice status breakdown, subscription metrics |
+| Analytics | 3 | Revenue, invoice stats, subscription metrics |
 | Auth | 3 | Nonce, verify (Monero signature), logout |
-| Price | 1 | Current XMR/USD/EUR rate |
-| Public | 3 | Public invoice view, SSE real-time events, payment page (HTML) |
-| Admin | 8 | Operator dashboard: stats, health, merchants, toggle, DLQ, trigger renewal |
-| Internal | 2 | Health check, trigger renewal sweep |
+| Licenses | 4 | Admin CRUD, public verify |
+| Price | 1 | Current XMR rate |
+| Public | 3 | Public invoice view, SSE, payment page |
+| Admin | 8 | Operator dashboard, health, DLQ management |
 
-```bash
-# Create invoice
-curl -X POST http://127.0.0.1:8013/v1/invoices \
-  -H "Authorization: Bearer gb_live_..." \
-  -H "Content-Type: application/json" \
-  -d '{"amount_xmr": "0.5", "description": "VPN 1 month"}'
-
-# Create subscription with 14-day trial
-curl -X POST http://127.0.0.1:8013/v1/subscriptions \
-  -H "Authorization: Bearer gb_live_..." \
-  -H "Content-Type: application/json" \
-  -d '{"customer_id": "...", "amount_xmr": "0.1", "interval_days": 30, "trial_days": 14}'
-
-# Check price
-curl http://127.0.0.1:8013/v1/price
-```
-
-All list endpoints use cursor-based pagination (Stripe-compatible: `starting_after`, `ending_before`, `has_more`).
-
-See [docs/API.md](docs/API.md) for the full reference.
+See [docs/API.md](docs/API.md) for the full reference with curl examples.
 
 ---
 
 ## Webhook Events
 
-20 event types covering the full payment and subscription lifecycle:
+22 event types covering the full payment and subscription lifecycle:
 
-**Payment events (3):** `payment.detected`, `payment.confirmed`, `payment.orphaned`
+- **Payment (3):** `payment.detected`, `payment.confirmed`, `payment.orphaned`
+- **Invoice (7):** `invoice.paid`, `invoice.expired`, `invoice.partially_paid`, `invoice.overpaid`, `invoice.late_paid`, `invoice.exception_payment`, `invoice.reverted`
+- **Subscription (12):** `subscription.created`, `subscription.renewed`, `subscription.past_due`, `subscription.cancelled`, `subscription.payment_confirmed`, `subscription.updated`, `subscription.paused`, `subscription.resumed`, `subscription.expired`, `subscription.trial_started`, `subscription.trial_ended`, `subscription.prepaid`
 
-**Invoice events (5):** `invoice.paid`, `invoice.expired`, `invoice.partially_paid`, `invoice.overpaid`, `invoice.late_paid`
-
-**Subscription events (12):** `subscription.created`, `subscription.renewed`, `subscription.past_due`, `subscription.cancelled`, `subscription.payment_confirmed`, `subscription.updated`, `subscription.paused`, `subscription.resumed`, `subscription.expired`, `subscription.trial_started`, `subscription.trial_ended`, `subscription.prepaid`
-
-All webhooks are signed with HMAC-SHA256 (`X-GhostBill-Signature` header) and retried up to 7 times over 38 hours with exponential backoff. Failed deliveries move to the Dead Letter Queue for manual inspection and retry.
+All webhooks are signed with HMAC-SHA256 (`X-GhostBill-Signature` header) and retried up to 7 times with exponential backoff. Failed deliveries move to the Dead Letter Queue.
 
 See [docs/WEBHOOKS.md](docs/WEBHOOKS.md) for verification examples and payload formats.
 
 ---
 
-## Clearnet Deployment
+## Security Model
 
-GhostBill is Tor-native by default. For merchants who choose clearnet access, we provide Docker Compose override files and an nginx reverse proxy configuration.
+- View-only wallet architecture — spend key never on server
+- AES-256-GCM encryption for view keys at rest
+- bcrypt-hashed API keys with timing-safe comparison
+- HMAC-SHA256 webhook signatures with replay protection
+- Redis distributed leases on all background task loops
+- Confirmed-only settlement (10-confirmation threshold)
+- Automatic reorg reversal for orphaned payments
+- Rate limiting, CORS, security headers, log redaction
+- 5-wave security audit: 82 of 99 findings closed
 
-```bash
-docker compose -f docker-compose.yml -f docker-compose.clearnet.yml up -d
-```
-
-See [docs/clearnet-setup.md](docs/clearnet-setup.md) for the full guide including SSL, Cloudflare integration, and security hardening.
-
-> **Note:** The decision to expose your GhostBill instance on clearnet is yours. Our reference deployment runs 100% over Tor.
+See [docs/SECURITY.md](docs/SECURITY.md) for the full threat model.
 
 ---
 
-## GhostBill vs BTCPay Server
+## Testing
 
-| | GhostBill | BTCPay Server |
-|---|-----------|---------------|
-| **Primary currency** | Monero (native) | Bitcoin (Monero = plugin) |
-| **Monero reliability** | Built for XMR from day one | Community plugin, sync issues reported |
-| **Custodial model** | View-only (non-custodial) | View-only (non-custodial) |
-| **Tor integration** | Native `.onion`, outgoing Tor proxy | Optional, manual setup |
-| **Mempool detection** | Yes (`pool: true`) | Varies by plugin |
-| **Invoice states** | 7 (including late_paid, overpaid) | 3–4 |
-| **Subscription states** | 6 (with trials + pre-payment) | Plugin-dependent |
-| **Webhook events** | 20, HMAC-signed, 7 retries + DLQ | Basic notifications |
-| **Privacy features** | No IP logging, timing jitter, log redaction | Standard logging |
-| **Dashboard auth** | Monero signature (passwordless) | Email/password |
-| **Setup complexity** | Docker Compose (5 containers) | Docker Compose (10+ containers) |
-| **Recurring billing** | Built-in (trials, prepay, grace periods) | Plugin-dependent |
+CI verifies clean install, migrations, lint/format, and the service-level test suite:
 
-GhostBill is purpose-built for Monero. BTCPay is an excellent Bitcoin processor with Monero support bolted on — but if XMR is your primary currency, GhostBill provides a more reliable and privacy-focused experience.
+```bash
+# Local CI (mirrors GitHub Actions)
+./scripts/ci-test.sh
+
+# Run tests manually inside backend container
+docker compose exec backend python3 -m pytest tests/wave5 -v --tb=short
+```
+
+The Wave 5 test suite includes 59 service-level tests covering payment processing, reorg handling, idempotency, concurrency, webhook dispatch, subscription lifecycle, authorization, analytics, and test isolation. Tests call production service methods (e.g. `PaymentService.process_transfer()`) against a real database — not mocked.
 
 ---
 
@@ -204,39 +157,12 @@ GhostBill is purpose-built for Monero. BTCPay is an excellent Bitcoin processor 
 
 | Document | Description |
 |----------|-------------|
-| [API Reference](docs/API.md) | 51 endpoints, curl examples, authentication, error codes |
-| [Webhooks](docs/WEBHOOKS.md) | 20 events, HMAC verification (Python/JS/curl), retry policy, DLQ |
-| [Security](docs/SECURITY.md) | 9-actor threat model, encryption, data retention |
-| [Deployment](docs/DEPLOYMENT.md) | Self-hosted setup, monerod, wallet-rpc, Tor, backups |
+| [API Reference](docs/API.md) | 53 endpoints, curl examples, authentication, error codes |
+| [Webhooks](docs/WEBHOOKS.md) | 22 events, HMAC verification, retry policy, DLQ |
+| [Security Model](docs/SECURITY.md) | Threat model, encryption, data retention |
+| [Deployment](docs/DEPLOYMENT.md) | Self-hosted setup: monerod, wallet-rpc, Tor, backups |
 | [Clearnet Setup](docs/clearnet-setup.md) | Optional clearnet guide with nginx, SSL, Cloudflare |
-| [Contributing](CONTRIBUTING.md) | How to contribute, code style, PR process |
-
----
-
-## Database
-
-14 tables across 4 enums:
-
-**Core:** merchants, invoices, invoice_addresses, payments, customers
-
-**Subscriptions:** subscriptions, subscription_payments, subscription_renewal_events
-
-**Infrastructure:** wallet_shards, api_keys, webhook_deliveries, webhook_dead_letters, audit_log
-
-**Migration system:** alembic_version (8 migrations, linear chain)
-
----
-
-## Testing
-
-```bash
-cd /root/ghostbill
-python3 -m pytest tests/ -v --tb=short
-```
-
-111 tests across 7 test files covering: end-to-end payment flow, subscription state machine, stress testing, analytics/SSE/trials/prepay (Phase 7–8), and coverage gap tests for webhooks, DLQ, admin, auth, and public invoice endpoints.
-
-**Code quality:** Ruff linting + formatting enforced via pre-commit hook on every commit.
+| [Changelog](CHANGELOG.md) | Version history and audit wave details |
 
 ---
 
@@ -244,40 +170,23 @@ python3 -m pytest tests/ -v --tb=short
 
 GhostBill is licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0).
 
-This means you can use, modify, and self-host GhostBill freely. If you modify it and offer it as a service, you must release your modifications under the same license.
+You can use, modify, and self-host GhostBill freely. If you modify it and offer it as a service, you must release your modifications under the same license.
 
 ---
 
 ## Security
 
-Found a vulnerability? Please report it responsibly to **contact@ghostbill.org**. See [docs/SECURITY.md](docs/SECURITY.md#responsible-disclosure) for our disclosure policy.
+Found a vulnerability? Please report it responsibly to **security@ghostbill.org**. Do not open a public issue for security vulnerabilities.
+
+See [SECURITY.md](SECURITY.md) for our disclosure policy.
 
 ---
 
-## Status
+## Roadmap
 
-GhostBill is in **beta** (`v1.1-beta`). The core payment processing and subscription lifecycle are tested and functional (111/111 tests passing), but it has not yet been battle-tested in high-volume production environments.
-
-**What works:**
-- Merchant registration and API key management
-- Invoice creation with unique subaddresses
-- Real-time payment detection (mempool + confirmed)
-- Full invoice lifecycle (7 statuses, automatic transitions)
-- Recurring subscriptions with grace periods and billing anchors
-- Trial periods (1–365 days) with auto-activation
-- Pre-payment (1–36 periods) with configurable discounts
-- Webhook delivery with HMAC signatures, retries, and Dead Letter Queue
-- Dashboard with Monero signature authentication
-- Analytics dashboard with revenue charts
-- SSE real-time updates on payment pages
-- Admin panel for instance operators
-- Tor hidden services
-- Cursor-based pagination on all list endpoints
-
-**Coming soon:**
-- Python SDK (`pip install ghostbill`)
-- CI/CD pipeline with structured logging
-- Plugin integrations (WooCommerce, WHMCS)
+- [ ] Python SDK (`pip install ghostbill`)
+- [ ] Plugin integrations (WooCommerce, WHMCS)
+- [ ] Expanded CI coverage (wave1–4 tests)
 
 ---
 

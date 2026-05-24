@@ -278,10 +278,10 @@ wallet-rpc connects GhostBill to the Monero blockchain via your monerod node.
 **Create a wallet** (if you don't have one):
 
 ```bash
-mkdir -p /root/ghostbill/wallet-data && chmod 700 /root/ghostbill/wallet-data
+mkdir -p /opt/ghostbill/wallet-data && chmod 700 /opt/ghostbill/wallet-data
 
 monero-wallet-cli \
-  --generate-new-wallet /root/ghostbill/wallet-data/ghostbill_wallet \
+  --generate-new-wallet /opt/ghostbill/wallet-data/ghostbill_wallet \
   --password "YOUR_WALLET_PASSWORD" \
   --mnemonic-language English
 ```
@@ -292,7 +292,7 @@ monero-wallet-cli \
 
 ```bash
 monero-wallet-cli \
-  --wallet-file /root/ghostbill/wallet-data/ghostbill_wallet \
+  --wallet-file /opt/ghostbill/wallet-data/ghostbill_wallet \
   --password "YOUR_WALLET_PASSWORD"
 ```
 
@@ -499,10 +499,10 @@ GhostBill includes an operator-level admin dashboard for managing your self-host
 
 | Data | Location | Priority | Frequency |
 |------|----------|----------|-----------|
-| Wallet files | `/root/ghostbill/wallet-data/` | **CRITICAL** | After any wallet change |
+| Wallet files | `/opt/ghostbill/wallet-data/` | **CRITICAL** | After any wallet change |
 | Wallet seed phrase | Offline (paper/metal) | **CRITICAL** | Once (at creation) |
 | PostgreSQL database | Docker volume | High | Daily |
-| `.env` file | `/root/ghostbill/.env` | High | After any change |
+| `.env` file | `/opt/ghostbill/.env` | High | After any change |
 | Tor keys | `/var/lib/tor/ghostbill_*/` | Medium | Once (preserves .onion addresses) |
 
 ### PostgreSQL backup
@@ -525,7 +525,7 @@ rsync -avz ghostbill_backup_*.sql.gz.gpg user@backup-server:/backups/ghostbill/
 docker compose stop walletrpc
 
 # Copy wallet files
-cp -r /root/ghostbill/wallet-data/ /root/ghostbill-wallet-backup-$(date +%Y%m%d)/
+cp -r /opt/ghostbill/wallet-data/ /opt/ghostbill-wallet-backup-$(date +%Y%m%d)/
 
 # Restart
 docker compose up -d walletrpc
@@ -537,9 +537,9 @@ docker compose up -d walletrpc
 
 ```bash
 #!/bin/bash
-# /root/ghostbill/scripts/backup.sh
+# /opt/ghostbill/scripts/backup.sh
 
-BACKUP_DIR="/root/ghostbill-backups"
+BACKUP_DIR="/opt/ghostbill-backups"
 DATE=$(date +%Y%m%d_%H%M%S)
 mkdir -p "$BACKUP_DIR"
 
@@ -562,7 +562,7 @@ Add to cron:
 
 ```bash
 crontab -e
-# Add: 0 3 * * * /root/ghostbill/scripts/backup.sh >> /var/log/ghostbill-backup.log 2>&1
+# Add: 0 3 * * * /opt/ghostbill/scripts/backup.sh >> /var/log/ghostbill-backup.log 2>&1
 ```
 
 ### Restore
@@ -643,7 +643,7 @@ docker exec ghostbill_postgres psql -U ghostbill -d ghostbill \
 
 ```bash
 #!/bin/bash
-# /root/ghostbill/scripts/monitor.sh
+# /opt/ghostbill/scripts/monitor.sh
 
 echo "=== GhostBill Status ==="
 echo ""
@@ -691,7 +691,7 @@ echo "Disk usage: $DISK_USED"
 ## Updating
 
 ```bash
-cd /root/ghostbill
+cd /opt/ghostbill
 
 # Pull latest code
 git pull origin main

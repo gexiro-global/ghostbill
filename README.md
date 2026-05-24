@@ -6,7 +6,7 @@ Non-custodial. Privacy-first. Open source.
 
 GhostBill is a self-hosted Monero payment processor for merchants who need reliable, private, and automated billing — including recurring subscriptions. It detects payments in real time, manages invoice lifecycles, handles subscription renewals with grace periods, and delivers webhook notifications — all without ever holding your funds.
 
-> **Status:** Audited release candidate (`v1.3-rc1`). Core payment processing and subscription lifecycle are tested across 5 security audit waves (82/99 findings closed). CI verifies clean install, migrations, lint/format, and the service-level release gate. Not yet battle-tested in high-volume production environments.
+> **Status:** Audited release candidate (`v1.3-rc2`). Core payment processing and subscription lifecycle are tested across 5 security audit waves (82/99 findings closed). CI verifies clean install, migrations, lint/format, and the service-level release gate. Not yet battle-tested in high-volume production environments.
 
 ---
 
@@ -176,7 +176,7 @@ You can use, modify, and self-host GhostBill freely. If you modify it and offer 
 
 ## Security
 
-Found a vulnerability? Please report it responsibly to **security@ghostbill.org**. Do not open a public issue for security vulnerabilities.
+Found a vulnerability? Please report it via [ghostbill.org/security](https://ghostbill.org/security). Do not open a public issue.
 
 See [SECURITY.md](SECURITY.md) for our disclosure policy.
 
@@ -190,4 +190,4 @@ See [SECURITY.md](SECURITY.md) for our disclosure policy.
 
 ---
 
-**Built by [Gexiro Enterprises Ltd](https://gexiro.com), Gibraltar.**
+**Built by [Gexiro Global Enterprises Ltd](https://gexiro.com), Gibraltar.**

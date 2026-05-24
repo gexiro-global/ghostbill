@@ -4,7 +4,7 @@
 
 If you discover a security vulnerability in GhostBill, please report it responsibly.
 
-**Email:** security@ghostbill.org
+**Report via:** [ghostbill.org/security](https://ghostbill.org/security)
 
 Please include:
 

@@ -2,6 +2,23 @@
 
 All notable changes to GhostBill are documented in this file.
 
+## [1.3-rc2] - 2026-05-24
+
+### Changed
+
+- Rewrote README for public release-candidate positioning
+- Added root SECURITY.md with responsible disclosure guidance
+- Added CHANGELOG.md covering audit waves and CI release gate
+- Removed internal OUTREACH.md from public repository
+- Neutralized deployment paths and softened absolute security claims
+- Secret scan verified clean before public push
+
+### Verified
+
+- GitHub Actions CI green on GitHub runner
+- Fresh clone release gate passed
+- Branch protection configured (required CI, enforce admins, no force push)
+
 ## [1.3-rc1] - 2026-05-24
 
 ### Added

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # GhostBill — Git pre-commit hook
-# Runs ruff check + format on staged Python files
+# Runs ruff check + format on staged Python files with each subproject's config
 # Install: cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 
 set -e
@@ -20,16 +20,48 @@ if [ ! -x "$RUFF" ]; then
     exit 1
 fi
 
-echo "$STAGED_PY" | xargs $RUFF check --no-cache --config backend/pyproject.toml
-if [ $? -ne 0 ]; then
-    echo "[pre-commit] FAILED: ruff check found errors. Fix them before committing."
-    exit 1
-fi
+BACKEND_FILES=()
+SDK_FILES=()
 
-echo "$STAGED_PY" | xargs $RUFF format --check --no-cache --config backend/pyproject.toml
-if [ $? -ne 0 ]; then
-    echo "[pre-commit] FAILED: ruff format check failed. Run: ruff format backend/app/ tests/"
-    exit 1
-fi
+while IFS= read -r file; do
+    case "$file" in
+        ghostbill-python/*)
+            SDK_FILES+=("$file")
+            ;;
+        *)
+            BACKEND_FILES+=("$file")
+            ;;
+    esac
+done <<< "$STAGED_PY"
+
+run_group() {
+    local group="$1"
+    local config="$2"
+    shift 2
+
+    if [ "$#" -eq 0 ]; then
+        return 0
+    fi
+
+    if [ ! -f "$config" ]; then
+        echo "[pre-commit] ERROR: required Ruff config for $group not found: $config"
+        exit 1
+    fi
+
+    echo "[pre-commit] Checking $group Python file(s) with $config..."
+
+    if ! "$RUFF" check --no-cache --config "$config" "$@"; then
+        echo "[pre-commit] FAILED: ruff check found errors for $group using $config. Fix them before committing."
+        exit 1
+    fi
+
+    if ! "$RUFF" format --check --no-cache --config "$config" "$@"; then
+        echo "[pre-commit] FAILED: ruff format check failed for $group using $config. Run: ruff format backend/app/ tests/"
+        exit 1
+    fi
+}
+
+run_group "backend" "backend/pyproject.toml" "${BACKEND_FILES[@]}"
+run_group "SDK" "ghostbill-python/pyproject.toml" "${SDK_FILES[@]}"
 
 echo "[pre-commit] All checks passed."

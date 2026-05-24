@@ -1,0 +1,81 @@
+[build-system]
+requires = ["setuptools>=75.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ghostbill"
+version = "0.1.0"
+description = "Official Python SDK for GhostBill, a privacy-first non-custodial Monero payment processor."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Gexiro Global Enterprises Ltd" }]
+keywords = ["ghostbill", "monero", "xmr", "payments", "subscriptions", "billing", "non-custodial"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+dependencies = ["httpx>=0.28.0,<1.0"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "respx>=0.21.0",
+    "mypy>=1.10.0",
+    "ruff>=0.15.0",
+    "coverage[toml]>=7.6.0",
+]
+
+[project.urls]
+Homepage = "https://ghostbill.org"
+Documentation = "https://github.com/gexiro-global/ghostbill"
+Repository = "https://github.com/gexiro-global/ghostbill"
+Issues = "https://github.com/gexiro-global/ghostbill/issues"
+Changelog = "https://github.com/gexiro-global/ghostbill/blob/main/CHANGELOG.md"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ghostbill = ["py.typed"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.ruff.lint.isort]
+known-first-party = ["ghostbill"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_unreachable = true
+files = ["src/ghostbill"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["ghostbill"]
+branch = true

@@ -85,7 +85,7 @@ Dashboard → Frontend (Next.js 15)
 
 ## API
 
-53 endpoints across 14 route modules. Authentication via `Authorization: Bearer gb_live_<hex>`.
+53 endpoints across 13 route modules. Authentication via `Authorization: Bearer gb_live_<hex>`.
 
 | Resource | Endpoints | Description |
 |----------|-----------|-------------|

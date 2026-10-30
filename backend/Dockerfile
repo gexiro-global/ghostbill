@@ -15,8 +15,12 @@ RUN adduser --disabled-password --gecos "" --uid 1001 ghostbill
 
 COPY pyproject.toml .
 
+# Test tooling is opt-in so it never ships in the production image.
+# docker-compose.test.yml sets INSTALL_TEST_DEPS=true for CI.
+ARG INSTALL_TEST_DEPS=false
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir .
+    && if [ "$INSTALL_TEST_DEPS" = "true" ]; then pip install --no-cache-dir ".[test]"; \
+       else pip install --no-cache-dir .; fi
 
 COPY . .
 
